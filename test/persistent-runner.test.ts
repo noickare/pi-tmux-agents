@@ -99,6 +99,22 @@ describe("PersistentAgentRunner", () => {
     await second.stop();
   });
 
+  it("clears active tool state when closed during execution", async () => {
+    const { store, job } = await setup();
+    const transport = new FakeTransport();
+    const runner = new PersistentAgentRunner(job, store, async () => transport, {
+      heartbeatIntervalMs: 60_000, commandPollIntervalMs: 60_000, output: { write() {} },
+    });
+    await runner.start();
+    transport.emit({ type: "agent_start" });
+    transport.emit({ type: "tool_execution_start", toolName: "bash" });
+    await runner.flushEvents();
+    await store.appendCommand(createCommand({ id: "close-running", agentId: job.agentId, type: "close" }));
+    await runner.processCommands();
+    expect(runner.currentSnapshot.status).toBe("closed");
+    expect(runner.currentSnapshot.currentTool).toBeUndefined();
+  });
+
   it("pauses and resumes without losing the prior state", async () => {
     const { store, job } = await setup();
     await store.appendCommand(createCommand({ id: "pause-1", agentId: job.agentId, type: "pause" }));

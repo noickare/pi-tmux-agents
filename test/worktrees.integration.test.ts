@@ -28,8 +28,8 @@ describe("WorktreeService integration", () => {
     await run("git", ["commit", "-m", "agent result"], spec.path);
     await service.merge(repo, spec.branch);
     expect(await readFile(join(repo, "result.txt"), "utf8")).toBe("child\n");
-    await service.remove(repo, spec.path);
-    await service.deleteBranch(repo, spec.branch);
+    await Promise.all([service.remove(repo, spec.path), service.remove(repo, spec.path)]);
+    await Promise.all([service.deleteBranch(repo, spec.branch), service.deleteBranch(repo, spec.branch)]);
     expect((await localCommandRunner("git", ["branch", "--list", spec.branch], { cwd: repo })).stdout.trim()).toBe("");
   }, 15_000);
 });

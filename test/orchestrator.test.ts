@@ -29,6 +29,11 @@ describe("AgentOrchestrator", () => {
     const commands = await readFile(join(getAgentStateDir("parent-1", launched.agentId, agentDir), "commands.jsonl"), "utf8");
     expect(commands).toContain(commandId);
     expect(commands).toContain("Focus on middleware");
+    registry.upsert(snapshot({ agentId: launched.agentId, name: "Scout", status: "idle", currentTool: undefined, tmuxTarget: launched.tmuxTarget! }));
+    await orchestrator.command(launched.agentId, "follow_up", "Run another inspection");
+    const routed = await readFile(join(getAgentStateDir("parent-1", launched.agentId, agentDir), "commands.jsonl"), "utf8");
+    expect(routed).toContain('"type":"prompt"');
+    expect(routed).toContain("Run another inspection");
   });
 
   it("replaces an orphaned agent while preserving its worktree and branch", async () => {
@@ -49,7 +54,9 @@ describe("AgentOrchestrator", () => {
     expect(replacement).toMatchObject({ queued: false, worktree: launched.worktree, branch: launched.branch, replaces: launched.agentId });
     const replacementJob = JSON.parse(await readFile(join(getAgentStateDir("parent-replace", replacement.agentId, agentDir), "agent.json"), "utf8"));
     expect(replacementJob).toMatchObject({ worktree: launched.worktree, branch: launched.branch, replaces: launched.agentId });
-    await expect(orchestrator.closeAndClean(launched.agentId, agentDir)).rejects.toThrow(`handed to ${replacement.agentId}`);
+    registry.upsert(snapshot({ agentId: replacement.agentId, name: "Worker", status: "closed", currentTool: undefined,
+      cwd: launched.worktree!, worktree: launched.worktree!, branch: launched.branch!, replaces: launched.agentId }));
+    await expect(orchestrator.closeAndClean(launched.agentId, agentDir)).resolves.toBeUndefined();
   });
 
   it("auto-pauses low-priority work under critical pressure and resumes after recovery", async () => {

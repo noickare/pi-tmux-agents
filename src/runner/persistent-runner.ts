@@ -172,13 +172,14 @@ export class PersistentAgentRunner {
         }
         case "replace": {
           const replacementAgentId = command.payload?.replacementAgentId;
-          this.snapshot = { ...this.snapshot, ...(typeof replacementAgentId === "string" ? { replacedBy: replacementAgentId } : {}) };
+          this.snapshot = withoutCurrentTool({ ...this.snapshot, ...(typeof replacementAgentId === "string" ? { replacedBy: replacementAgentId } : {}) });
           await this.emitAcknowledgement(command, true);
           await this.setStatus("replaced", "Superseded by replacement agent");
           await this.stop();
           return;
         }
         case "close":
+          this.snapshot = withoutCurrentTool(this.snapshot);
           await this.emitAcknowledgement(command, true);
           await this.setStatus("closed", "Closed by parent");
           await this.stop();

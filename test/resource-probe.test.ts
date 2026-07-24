@@ -3,6 +3,17 @@ import type { CommandRunner } from "../src/services/command-runner.js";
 import { ResourceProbe } from "../src/services/resource-probe.js";
 
 describe("ResourceProbe", () => {
+  it("uses macOS memory pressure instead of immediately free pages", async () => {
+    const run = vi.fn<CommandRunner>().mockImplementation(async (command) => command === "memory_pressure"
+      ? { stdout: "System-wide memory free percentage: 50%\n", stderr: "", code: 0 }
+      : command === "df"
+        ? { stdout: "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/disk 1000 250 750 25% /tmp\n", stderr: "", code: 0 }
+        : { stdout: "", stderr: "", code: 0 });
+    const result = await new ResourceProbe(run, "darwin").snapshot("/tmp");
+    expect(result.availableMemoryBytes).toBe(result.totalMemoryBytes / 2);
+    expect(run).toHaveBeenCalledWith("memory_pressure", ["-Q"]);
+  });
+
   it("reads available disk bytes without shell interpolation", async () => {
     const run = vi.fn<CommandRunner>().mockResolvedValue({
       stdout: "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/disk 1000 250 750 25% /tmp\n",

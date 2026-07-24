@@ -10,7 +10,7 @@ export interface ResourceProbeOptions {
 }
 
 export class ResourceProbe {
-  constructor(private readonly run: CommandRunner) {}
+  constructor(private readonly run: CommandRunner, private readonly platform = process.platform) {}
 
   async snapshot(path: string, options: ResourceProbeOptions = {}): Promise<ResourceSnapshot> {
     const activeBuildWeight = await this.activeBuildWeight();
@@ -18,13 +18,23 @@ export class ResourceProbe {
       cpuCount: cpus().length,
       loadAverage1m: loadavg()[0] ?? 0,
       totalMemoryBytes: totalmem(),
-      availableMemoryBytes: freemem(),
+      availableMemoryBytes: await this.availableMemory(),
       availableDiskBytes: await this.availableDisk(path),
       activeWeight: (options.activeWeight ?? 0) + activeBuildWeight,
       parentReservedCpu: options.parentReservedCpu ?? 1,
       parentReservedMemoryBytes: options.parentReservedMemoryBytes ?? 1024 ** 3,
       providerBackoff: options.providerBackoff ?? false,
     };
+  }
+
+  private async availableMemory(): Promise<number> {
+    if (this.platform !== "darwin") return freemem();
+    const result = await this.run("memory_pressure", ["-Q"]);
+    const percentage = result.stdout.match(/System-wide memory free percentage:\s*(\d+(?:\.\d+)?)%/i)?.[1];
+    const availablePercentage = Number(percentage);
+    return result.code === 0 && Number.isFinite(availablePercentage)
+      ? totalmem() * availablePercentage / 100
+      : freemem();
   }
 
   private async activeBuildWeight(): Promise<number> {

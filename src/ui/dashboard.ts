@@ -55,7 +55,7 @@ export class AgentDashboard implements Component {
   render(width: number): string[] {
     const safeWidth = Math.max(1, width);
     const lines = safeWidth >= 76 ? this.renderWide(safeWidth) : this.renderNarrow(safeWidth);
-    return lines.map((line) => truncateToWidth(line, safeWidth));
+    return lines.map((line) => this.theme.bg("customMessageBg", pad(truncateToWidth(line, safeWidth), safeWidth)));
   }
 
   invalidate(): void {}

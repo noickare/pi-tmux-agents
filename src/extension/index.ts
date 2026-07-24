@@ -226,7 +226,7 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
         return;
       }
       if (action === "new") {
-        const task = rest.join(" ") || await ctx.ui.input("New persistent agent", "Task");
+        const task = parseNewAgentTask(agentId, rest) || await ctx.ui.input("New persistent agent", "Task");
         if (!task) return;
         const launched = await requireOrchestrator().spawn({ name: "worker", task, cwd: ctx.cwd, mutating: true, approveProject: ctx.isProjectTrusted() });
         ctx.ui.notify(`Spawned ${launched.agentId}`, "info");
@@ -356,28 +356,33 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
 
   async function showDashboard(ctx: ExtensionCommandContext): Promise<void> {
     if (ctx.mode !== "tui") { ctx.ui.notify("The agents dashboard requires TUI mode", "error"); return; }
+    let liveTerminalWidth = process.stdout.columns || 80;
     await ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
+      liveTerminalWidth = tui.terminal.columns;
       const build = () => createDashboardViewModel(registry.list(), new Date(), lastWatchdogAt, nextParentReviewAt, {
         findings: lastWatchdogFindings,
         ...(lastResources ? { resources: lastResources } : {}),
         config: sessionConfig,
       });
+      const safely = (operation: () => Promise<unknown>) => {
+        void operation().catch((error: unknown) => ctx.ui.notify(`Agent action failed: ${(error as Error).message}`, "error"));
+      };
       const dashboard = new AgentDashboard(build(), theme, {
         close: () => done(),
-        checkNow: () => void runWatchdog().then(() => { dashboard.setViewModel(build()); tui.requestRender(); }),
-        attach: (id) => { done(); void attachAgent(ctx, requireAgent(id)); },
-        steer: (id) => void steerFromDashboard(ctx, id),
-        followUp: (id) => void followUpFromDashboard(ctx, id),
-        togglePause: (id, paused) => void requireOrchestrator().command(id, paused ? "resume" : "pause"),
-        recover: (id) => void recoverFromDashboard(ctx, id),
-        abort: (id) => void abortFromDashboard(ctx, id),
-        closeAgent: (id) => void closeFromDashboard(ctx, id),
+        checkNow: () => safely(async () => { await runWatchdog(); dashboard.setViewModel(build()); tui.requestRender(); }),
+        attach: (id) => { done(); safely(() => attachAgent(ctx, requireAgent(id))); },
+        steer: (id) => safely(() => steerFromDashboard(ctx, id)),
+        followUp: (id) => safely(() => followUpFromDashboard(ctx, id)),
+        togglePause: (id, paused) => safely(() => requireOrchestrator().command(id, paused ? "resume" : "pause")),
+        recover: (id) => safely(() => recoverFromDashboard(ctx, id)),
+        abort: (id) => safely(() => abortFromDashboard(ctx, id)),
+        closeAgent: (id) => safely(() => closeFromDashboard(ctx, id)),
       });
-      const refresh = () => { dashboard.setViewModel(build()); tui.requestRender(); };
+      const refresh = () => { liveTerminalWidth = tui.terminal.columns; dashboard.setViewModel(build()); tui.requestRender(); };
       const unsubscribe = registry.subscribe(refresh);
       const timer = setInterval(refresh, 1_000);
       return { render: (width) => dashboard.render(width), handleInput: (data) => { dashboard.handleInput(data); tui.requestRender(); }, invalidate: () => dashboard.invalidate(), dispose: () => { clearInterval(timer); unsubscribe(); } };
-    }, { overlay: true, overlayOptions: () => ({ width: process.stdout.columns >= 110 ? "68%" : "94%", maxHeight: "88%", anchor: process.stdout.columns >= 110 ? "right-center" : "center", margin: 1 }) });
+    }, { overlay: true, overlayOptions: () => ({ width: liveTerminalWidth >= 110 ? "68%" : "94%", maxHeight: "88%", anchor: liveTerminalWidth >= 110 ? "right-center" : "center", margin: 1 }) });
   }
 
   function installWidget(ctx: ExtensionContext): void {
@@ -546,6 +551,10 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
       return { render: () => [], invalidate() {} };
     });
   }
+}
+
+export function parseNewAgentTask(firstWord: string | undefined, remaining: readonly string[]): string {
+  return [firstWord, ...remaining].filter((part): part is string => Boolean(part)).join(" ");
 }
 
 function toolResult(text: string, details: Record<string, unknown>) {
