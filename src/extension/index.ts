@@ -9,10 +9,12 @@ import {
 import { Text, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { discoverAgents } from "../core/agents.js";
+import { DEFAULT_CONFIG, loadConfig, type TmuxAgentsConfig } from "../core/config.js";
 import { getAgentStateRoot } from "../core/paths.js";
 import type { AgentCommandType, AgentSnapshot } from "../core/protocol.js";
 import { AgentRegistry } from "../core/registry.js";
 import type { CommandRunner } from "../services/command-runner.js";
+import { AgentsDoctor, formatDoctorReport } from "../services/doctor.js";
 import { localCommandRunner } from "../services/local-command-runner.js";
 import { AgentOrchestrator } from "../services/orchestrator.js";
 import { ResourceProbe } from "../services/resource-probe.js";
@@ -25,7 +27,6 @@ import { AgentDashboard } from "../ui/dashboard.js";
 import { ProgressWidget } from "../ui/progress-widget.js";
 import { createDashboardViewModel } from "../ui/view-model.js";
 
-const REVIEW_INTERVAL_MS = 5 * 60_000;
 const TOOL_ACTIONS = [
   "list", "status", "spawn", "prompt", "steer", "follow_up", "pause", "resume", "abort", "restart", "close", "check", "merge",
 ] as const;
@@ -51,6 +52,8 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
   let nextParentReviewAt: Date | undefined;
   let supervisionTimer: NodeJS.Timeout | undefined;
   let schedulerTimer: NodeJS.Timeout | undefined;
+  let watchdogTimer: NodeJS.Timeout | undefined;
+  let sessionConfig: TmuxAgentsConfig = DEFAULT_CONFIG;
   let registrySubscription: (() => void) | undefined;
   let clearWidget: (() => void) | undefined;
   const observedCompletions = new Map<string, string>();
@@ -144,6 +147,8 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
     description: "Open dashboard, or use: /agents check|new|attach <id>|steer <id>",
     handler: async (args, ctx) => {
       const [action, agentId, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+      if (action === "doctor") return runDoctor(ctx);
+      if (action === "setup") return runSetup(ctx);
       if (action === "check") {
         const findings = await runWatchdog();
         ctx.ui.notify(formatFindings(findings), findings.some((item) => item.severity === "error") ? "error" : "info");
@@ -167,18 +172,19 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("agents-doctor", {
-    description: "Check prerequisites for persistent tmux agents",
-    handler: async (_args, ctx) => {
-      const [tmuxResult, git, node] = await Promise.all([pi.exec("tmux", ["-V"]), pi.exec("git", ["--version"]), pi.exec(process.execPath, ["--version"])]);
-      const failures = [tmuxResult.code === 0 ? undefined : "tmux", git.code === 0 ? undefined : "git", node.code === 0 ? undefined : "node"].filter(Boolean);
-      if (failures.length) ctx.ui.notify(`Missing prerequisites: ${failures.join(", ")}`, "error");
-      else ctx.ui.notify(`${tmuxResult.stdout.trim()} · ${git.stdout.trim()} · node ${node.stdout.trim()} · ready`, "info");
-    },
+    description: "Check prerequisites and tmux configuration",
+    handler: async (_args, ctx) => runDoctor(ctx),
+  });
+
+  pi.registerCommand("agents-setup", {
+    description: "Show setup guidance without running sudo or editing configuration",
+    handler: async (_args, ctx) => runSetup(ctx),
   });
 
   pi.on("session_start", async (_event, ctx) => {
     const parentSessionId = ctx.sessionManager.getSessionId();
     const agentDir = getAgentDir();
+    sessionConfig = await loadConfig(ctx.cwd, agentDir, ctx.isProjectTrusted());
     const run: CommandRunner = async (command, args, options) => pi.exec(command, [...args], options);
     const tmux = new TmuxService(run);
     orchestrator = new AgentOrchestrator(
@@ -187,16 +193,25 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
       registry,
       new RunnerLauncher(tmux),
       new WorktreeService(run),
-      { resourceProbe: new ResourceProbe(run) },
+      {
+        resourceProbe: new ResourceProbe(run),
+        resourceProbeOptions: {
+          parentReservedCpu: sessionConfig.parentReservedCpu,
+          parentReservedMemoryBytes: sessionConfig.parentReservedMemoryBytes,
+        },
+      },
     );
     monitor = new SnapshotMonitor(getAgentStateRoot(parentSessionId, agentDir), registry, {
-      intervalMs: 1_000,
+      intervalMs: sessionConfig.monitorIntervalMs,
       onError: (error) => ctx.ui.notify(`Agent monitor: ${error.message}`, "error"),
     });
-    watchdog = new AgentWatchdog(monitor, tmux);
+    watchdog = new AgentWatchdog(monitor, tmux, {
+      heartbeatStaleMs: sessionConfig.heartbeatStaleMs,
+      progressStaleMs: sessionConfig.progressStaleMs,
+    });
     await monitor.start();
     lastWatchdogAt = new Date();
-    nextParentReviewAt = new Date(Date.now() + REVIEW_INTERVAL_MS);
+    nextParentReviewAt = new Date(Date.now() + sessionConfig.parentReviewIntervalMs);
 
     for (const agent of registry.list()) if (agent.lastCompletedAt) observedCompletions.set(agent.agentId, agent.lastCompletedAt);
     registrySubscription = registry.subscribe(() => {
@@ -219,9 +234,10 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
     });
 
     supervisionTimer = setInterval(() => void supervise(), 10_000);
+    watchdogTimer = setInterval(() => void runWatchdog().catch((error: unknown) => ctx.ui.notify(`Agent watchdog: ${(error as Error).message}`, "error")), sessionConfig.watchdogIntervalMs);
     schedulerTimer = setInterval(() => void orchestrator?.drainQueue().then((count) => {
       if (count) void monitor?.scan();
-    }).catch((error: unknown) => ctx.ui.notify(`Agent scheduler: ${(error as Error).message}`, "error")), 5_000);
+    }).catch((error: unknown) => ctx.ui.notify(`Agent scheduler: ${(error as Error).message}`, "error")), sessionConfig.schedulerIntervalMs);
     if (ctx.mode === "tui") installWidget(ctx);
     updateStatus(ctx);
   });
@@ -239,6 +255,8 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
     supervisionTimer = undefined;
     if (schedulerTimer) clearInterval(schedulerTimer);
     schedulerTimer = undefined;
+    if (watchdogTimer) clearInterval(watchdogTimer);
+    watchdogTimer = undefined;
     ctx.ui.setWidget("tmux-agents", undefined);
     ctx.ui.setStatus("tmux-agents", undefined);
   });
@@ -280,10 +298,35 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
   async function supervise(): Promise<void> {
     if (!nextParentReviewAt || Date.now() < nextParentReviewAt.getTime()) return;
     const active = registry.list().filter((agent) => !["closed", "replaced"].includes(agent.status));
-    nextParentReviewAt = new Date(Date.now() + REVIEW_INTERVAL_MS);
+    nextParentReviewAt = new Date(Date.now() + sessionConfig.parentReviewIntervalMs);
+    for (const agent of active) {
+      if (agent.status !== "idle") continue;
+      const idleSince = new Date(agent.lastCompletedAt ?? agent.updatedAt).getTime();
+      if (Date.now() - idleSince > sessionConfig.idleTimeoutMs) await orchestrator?.command(agent.agentId, "close");
+    }
     if (!active.length) return;
     const findings = await runWatchdog().catch(() => []);
     wakeParent(`Periodic child review:\n${formatAgents(active)}${findings.length ? `\n\n${formatFindings(findings)}` : ""}\nCheck for stalled work, steer as needed, validate completed branches, and merge or reassign work.`);
+  }
+
+  async function runDoctor(ctx: ExtensionContext): Promise<void> {
+    const checks = await doctor().check(getAgentStateRoot(ctx.sessionManager.getSessionId(), getAgentDir()));
+    const report = formatDoctorReport(checks);
+    ctx.ui.notify(report, checks.some((check) => !check.ok) ? "warning" : "info");
+  }
+
+  async function runSetup(ctx: ExtensionContext): Promise<void> {
+    const checks = await doctor().check(getAgentStateRoot(ctx.sessionManager.getSessionId(), getAgentDir()));
+    const report = formatDoctorReport(checks);
+    if (checks.every((check) => check.ok)) { ctx.ui.notify("Persistent agent prerequisites are ready.", "info"); return; }
+    if (ctx.hasUI && await ctx.ui.confirm("Show setup guidance?", "No commands will be executed and no files will be changed.")) {
+      await ctx.ui.editor("Persistent agent setup", `${report}\n\nAfter applying desired changes, run /agents-doctor again.`);
+    }
+  }
+
+  function doctor(): AgentsDoctor {
+    const run: CommandRunner = async (command, args, options) => pi.exec(command, [...args], options);
+    return new AgentsDoctor(run);
   }
 
   function wakeParent(content: string): void {

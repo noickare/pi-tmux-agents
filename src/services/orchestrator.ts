@@ -6,7 +6,7 @@ import { createCommand, PROTOCOL_VERSION, type AgentCommandType, type AgentSnaps
 import { AgentRegistry } from "../core/registry.js";
 import { AgentStateStore } from "../core/state-store.js";
 import { AdmissionQueue, type QueuedSpawn } from "./admission-queue.js";
-import { ResourceProbe } from "./resource-probe.js";
+import { ResourceProbe, type ResourceProbeOptions } from "./resource-probe.js";
 import { RunnerLauncher } from "./runner-launcher.js";
 import { decideAdmission } from "./scheduler.js";
 import { WorktreeService } from "./worktrees.js";
@@ -35,6 +35,7 @@ export interface SpawnedAgent {
 export interface OrchestratorOptions {
   resourceProbe?: Pick<ResourceProbe, "snapshot">;
   queue?: AdmissionQueue;
+  resourceProbeOptions?: ResourceProbeOptions;
 }
 
 export class AgentOrchestrator {
@@ -162,7 +163,7 @@ export class AgentOrchestrator {
   private async admission(input: SpawnAgentInput) {
     if (!this.options.resourceProbe) return { admitted: true, reason: "resource probe disabled" } as const;
     const activeWeight = this.registry.list().filter((agent) => ["running", "waiting", "retrying", "compacting", "starting"].includes(agent.status)).length;
-    const resources = await this.options.resourceProbe.snapshot(input.cwd, { activeWeight });
+    const resources = await this.options.resourceProbe.snapshot(input.cwd, { ...this.options.resourceProbeOptions, activeWeight });
     return decideAdmission(resources, (input.mutating ?? true) ? "heavy" : "light");
   }
 
