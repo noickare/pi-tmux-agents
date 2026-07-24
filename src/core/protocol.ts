@@ -46,6 +46,7 @@ export type AgentEventType =
   | "tool_finished"
   | "queue_changed"
   | "resource_changed"
+  | "usage_changed"
   | "diagnostic"
   | "command_acknowledged"
   | "runner_stopped";

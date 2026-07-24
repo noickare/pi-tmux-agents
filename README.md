@@ -17,7 +17,7 @@ Persistent, steerable, tmux-backed subagents for [pi](https://github.com/earendi
 
 ## Project status
 
-Wave 1 foundations are under development: typed lifecycle and control contracts, durable state storage, tmux and worktree adapters, resource-aware admission, agent discovery, and responsive TUI components. The full architecture and product requirements are documented in [`docs/PRD.md`](docs/PRD.md).
+Wave 1 foundations are complete. Wave 2 adds the persistent tmux runner: isolated pi RPC sessions, durable command acknowledgement and replay, readable transcripts, heartbeats, stale-lock recovery, process-group pause/resume, and restart-safe session reuse. Parent orchestration tools and watchdog policy are the next integration track. The full architecture and product requirements are documented in [`docs/PRD.md`](docs/PRD.md).
 
 ## Development
 
@@ -25,10 +25,12 @@ Wave 1 foundations are under development: typed lifecycle and control contracts,
 npm install
 npm run validate
 npm run tui:fixtures
+npm run smoke:runner
 ```
 
 - `npm run validate` runs strict TypeScript checking and the test suite.
 - `npm run tui:fixtures` renders narrow and wide dashboard/widget fixtures for visual review.
+- `npm run smoke:runner` launches a real detached tmux runner, verifies its RPC heartbeat state, and closes it cleanly without making a model call.
 - During development, load the extension with `pi -e ./src/extension/index.ts`.
 
 ## License
