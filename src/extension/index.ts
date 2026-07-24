@@ -11,7 +11,8 @@ import { Type } from "typebox";
 import { discoverAgents } from "../core/agents.js";
 import { DEFAULT_CONFIG, loadConfig, type TmuxAgentsConfig } from "../core/config.js";
 import { getAgentStateRoot } from "../core/paths.js";
-import type { AgentCommandType, AgentSnapshot } from "../core/protocol.js";
+import type { AgentCommandType, AgentPriority, AgentSnapshot, AgentWeight } from "../core/protocol.js";
+import type { ResourceSnapshot } from "../services/scheduler.js";
 import { AgentRegistry } from "../core/registry.js";
 import type { CommandRunner } from "../services/command-runner.js";
 import { AgentsDoctor, formatDoctorReport } from "../services/doctor.js";
@@ -28,7 +29,7 @@ import { ProgressWidget } from "../ui/progress-widget.js";
 import { createDashboardViewModel } from "../ui/view-model.js";
 
 const TOOL_ACTIONS = [
-  "list", "status", "spawn", "prompt", "steer", "follow_up", "pause", "resume", "abort", "restart", "close", "check", "merge",
+  "list", "status", "spawn", "prompt", "steer", "follow_up", "pause", "resume", "abort", "restart", "replace", "set_priority", "diff", "validate", "close", "clean", "check", "merge",
 ] as const;
 
 const ToolParameters = Type.Object({
@@ -41,6 +42,10 @@ const ToolParameters = Type.Object({
   mutating: Type.Optional(Type.Boolean({ default: true })),
   approveProject: Type.Optional(Type.Boolean({ default: false })),
   discard: Type.Optional(Type.Boolean({ default: false })),
+  reason: Type.Optional(Type.String()),
+  priority: Type.Optional(StringEnum(["interactive", "merge-critical", "normal", "speculative"] as const)),
+  weight: Type.Optional(StringEnum(["light", "normal", "heavy"] as const)),
+  validationCommand: Type.Optional(Type.Array(Type.String(), { description: "Executable followed by argv; no shell interpolation" })),
 });
 
 export default function tmuxAgentsExtension(pi: ExtensionAPI) {
@@ -53,7 +58,11 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
   let supervisionTimer: NodeJS.Timeout | undefined;
   let schedulerTimer: NodeJS.Timeout | undefined;
   let watchdogTimer: NodeJS.Timeout | undefined;
+  let watchdogRun: Promise<WatchdogFinding[]> | undefined;
   let sessionConfig: TmuxAgentsConfig = DEFAULT_CONFIG;
+  let lastWatchdogFindings: WatchdogFinding[] = [];
+  let lastResources: ResourceSnapshot | undefined;
+  const remediation = new Map<string, { firstSeenAt: number; stage: "diagnosed" | "restarted" | "replaced"; progressAt: string }>();
   let registrySubscription: (() => void) | undefined;
   let clearWidget: (() => void) | undefined;
   const observedCompletions = new Map<string, string>();
@@ -67,7 +76,7 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "tmux_agent",
     label: "Tmux Agent",
-    description: "Create and control persistent tmux-backed pi agents. Supports repeated prompts, steering, follow-ups, pause/resume, restart, watchdog checks, and local branch merges.",
+    description: "Create and control persistent tmux-backed pi agents. Supports replacement handoff, priority, diff, validation, cleanup, supervision, and local branch merges.",
     promptSnippet: "Create, inspect, steer, supervise, and merge persistent tmux-backed subagents",
     promptGuidelines: [
       "Use tmux_agent to delegate independent or specialized work that benefits from persistent context.",
@@ -101,6 +110,8 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
           ...(params.tools ? { tools: params.tools } : {}),
           mutating: params.mutating ?? true,
           approveProject: params.approveProject === true && ctx.isProjectTrusted(),
+          ...(params.priority ? { priority: params.priority as AgentPriority } : {}),
+          ...(params.weight ? { weight: params.weight as AgentWeight } : {}),
         });
         await monitor?.scan();
         const summary = launched.queued
@@ -116,7 +127,33 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
         await manager.merge(required(params.agent, "agent"), ctx.cwd);
         return toolResult(`Merged ${params.agent} into the parent branch`, { agents: manager.list() });
       }
+      if (params.action === "clean") {
+        if (params.agent) {
+          await manager.closeAndClean(params.agent, ctx.cwd, params.discard ?? false);
+          return toolResult(`Cleaned ${params.agent}`, { agents: manager.list() });
+        }
+        const cleaned = await manager.clean(ctx.cwd, params.discard ?? false);
+        return toolResult(`Cleaned: ${cleaned.cleaned.join(", ") || "none"}${cleaned.retained.length ? `\nRetained:\n${cleaned.retained.map((item) => `${item.agentId}: ${item.reason}`).join("\n")}` : ""}`, { cleaned });
+      }
       const agent = required(params.agent, "agent");
+      if (params.action === "replace") {
+        const launched = await manager.replace(agent, params.reason);
+        await monitor?.scan();
+        return toolResult(`Replaced ${agent} with ${launched.agentId}${launched.queued ? ` (queued: ${launched.queueReason})` : `\ntmux: ${launched.tmuxTarget}`}`, { launched });
+      }
+      if (params.action === "set_priority") {
+        await manager.setPriority(agent, required(params.priority, "priority") as AgentPriority);
+        return toolResult(`Priority for ${agent} set to ${params.priority}`, { agents: manager.list() });
+      }
+      if (params.action === "diff") {
+        const diff = await manager.diff(agent);
+        return toolResult(diff || "No changes from the agent base commit.", { diff });
+      }
+      if (params.action === "validate") {
+        if (!params.validationCommand?.length) throw new Error("validationCommand is required");
+        const validation = await manager.validate(agent, params.validationCommand);
+        return toolResult(`Exit ${validation.code}\n${validation.stdout}${validation.stderr ? `\nSTDERR:\n${validation.stderr}` : ""}`, { validation });
+      }
       if (params.action === "close") {
         await manager.closeAndClean(agent, ctx.cwd, params.discard ?? false);
         return toolResult(`Close queued for ${agent}`, { agents: manager.list() });
@@ -144,7 +181,7 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("agents", {
-    description: "Open dashboard, or use: /agents check|new|attach <id>|steer <id>",
+    description: "Open dashboard, or use: /agents new|check|attach|steer|follow-up|replace|diff|validate|clean",
     handler: async (args, ctx) => {
       const [action, agentId, ...rest] = args.trim().split(/\s+/).filter(Boolean);
       if (action === "doctor") return runDoctor(ctx);
@@ -155,6 +192,34 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
         return;
       }
       if (action === "attach" && agentId) return attachAgent(ctx, requireAgent(agentId));
+      if (action === "clean") {
+        if (!await ctx.ui.confirm("Clean terminal agents?", "Clean worktrees are removed; dirty worktrees are retained.")) return;
+        const result = await requireOrchestrator().clean(ctx.cwd, [agentId, ...rest].includes("--discard"));
+        ctx.ui.notify(`Cleaned ${result.cleaned.length}; retained ${result.retained.length}`, result.retained.length ? "warning" : "info");
+        return;
+      }
+      if (action === "diff" && agentId) {
+        await ctx.ui.editor(`Diff ${agentId}`, await requireOrchestrator().diff(agentId) || "No changes from base commit.");
+        return;
+      }
+      if (action === "validate" && agentId) {
+        if (!rest.length) { ctx.ui.notify("Usage: /agents validate <agent> <executable> [args...]", "error"); return; }
+        const result = await requireOrchestrator().validate(agentId, rest);
+        ctx.ui.notify(`Validation exited ${result.code}`, result.code === 0 ? "info" : "error");
+        await ctx.ui.editor(`Validation ${agentId}`, `${result.stdout}${result.stderr ? `\nSTDERR:\n${result.stderr}` : ""}`);
+        return;
+      }
+      if (action === "replace" && agentId) {
+        if (!await ctx.ui.confirm(`Replace ${agentId}?`, "A new persistent session will inherit its worktree and receive a context handoff.")) return;
+        const launched = await requireOrchestrator().replace(agentId, rest.join(" ") || "Replaced by operator");
+        ctx.ui.notify(`Replacement ${launched.agentId} ${launched.queued ? "queued" : "started"}`, "info");
+        return;
+      }
+      if (["follow-up", "follow_up"].includes(action ?? "") && agentId) {
+        const message = rest.join(" ") || await ctx.ui.editor(`Follow up ${agentId}`, "");
+        if (message) await requireOrchestrator().command(agentId, "follow_up", message);
+        return;
+      }
       if (action === "steer" && agentId) {
         const message = rest.join(" ") || await ctx.ui.input(`Steer ${agentId}`, "Instruction");
         if (message) await requireOrchestrator().command(agentId, "steer", message);
@@ -187,18 +252,28 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
     sessionConfig = await loadConfig(ctx.cwd, agentDir, ctx.isProjectTrusted());
     const run: CommandRunner = async (command, args, options) => pi.exec(command, [...args], options);
     const tmux = new TmuxService(run);
+    const resourceProbe = new ResourceProbe(run);
+    const worktrees = new WorktreeService(run);
+    const schedulerThresholds = {
+      minimumFreeMemoryBytes: sessionConfig.minimumFreeMemoryBytes,
+      criticalFreeMemoryBytes: sessionConfig.criticalFreeMemoryBytes,
+      minimumFreeDiskBytes: sessionConfig.minimumFreeDiskBytes,
+      maximumLoadPerAvailableCpu: sessionConfig.maximumLoadPerAvailableCpu,
+    };
     orchestrator = new AgentOrchestrator(
       parentSessionId,
       agentDir,
       registry,
       new RunnerLauncher(tmux),
-      new WorktreeService(run),
+      worktrees,
       {
-        resourceProbe: new ResourceProbe(run),
+        resourceProbe,
         resourceProbeOptions: {
           parentReservedCpu: sessionConfig.parentReservedCpu,
           parentReservedMemoryBytes: sessionConfig.parentReservedMemoryBytes,
         },
+        schedulerThresholds,
+        resourceRecoveryStableMs: sessionConfig.resourceRecoveryStableMs,
       },
     );
     monitor = new SnapshotMonitor(getAgentStateRoot(parentSessionId, agentDir), registry, {
@@ -208,6 +283,12 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
     watchdog = new AgentWatchdog(monitor, tmux, {
       heartbeatStaleMs: sessionConfig.heartbeatStaleMs,
       progressStaleMs: sessionConfig.progressStaleMs,
+      uiRequestStaleMs: sessionConfig.uiRequestStaleMs,
+      queueStaleMs: sessionConfig.queueStaleMs,
+      resourceProbe,
+      worktrees,
+      queue: { health: () => requireOrchestrator().queueHealth() },
+      schedulerThresholds,
     });
     await monitor.start();
     lastWatchdogAt = new Date();
@@ -235,9 +316,17 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
 
     supervisionTimer = setInterval(() => void supervise(), 10_000);
     watchdogTimer = setInterval(() => void runWatchdog().catch((error: unknown) => ctx.ui.notify(`Agent watchdog: ${(error as Error).message}`, "error")), sessionConfig.watchdogIntervalMs);
-    schedulerTimer = setInterval(() => void orchestrator?.drainQueue().then((count) => {
-      if (count) void monitor?.scan();
-    }).catch((error: unknown) => ctx.ui.notify(`Agent scheduler: ${(error as Error).message}`, "error")), sessionConfig.schedulerIntervalMs);
+    schedulerTimer = setInterval(() => void (async () => {
+      if (!orchestrator) return;
+      if (sessionConfig.autoPauseOnCritical) {
+        const balance = await orchestrator.rebalance(ctx.cwd);
+        lastResources = balance?.resources;
+        if (balance?.paused.length) wakeParent(`Critical resource pressure auto-paused: ${balance.paused.join(", ")}`);
+        if (balance?.resumed.length) wakeParent(`Resources recovered; resumed: ${balance.resumed.join(", ")}`);
+      } else lastResources = await orchestrator.resources(ctx.cwd);
+      const count = await orchestrator.drainQueue();
+      if (count) await monitor?.scan();
+    })().catch((error: unknown) => ctx.ui.notify(`Agent scheduler: ${(error as Error).message}`, "error")), sessionConfig.schedulerIntervalMs);
     if (ctx.mode === "tui") installWidget(ctx);
     updateStatus(ctx);
   });
@@ -246,7 +335,11 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
     monitor?.stop();
     monitor = undefined;
     watchdog = undefined;
+    watchdogRun = undefined;
     orchestrator = undefined;
+    lastWatchdogFindings = [];
+    lastResources = undefined;
+    remediation.clear();
     registrySubscription?.();
     registrySubscription = undefined;
     clearWidget?.();
@@ -264,35 +357,100 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
   async function showDashboard(ctx: ExtensionCommandContext): Promise<void> {
     if (ctx.mode !== "tui") { ctx.ui.notify("The agents dashboard requires TUI mode", "error"); return; }
     await ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
-      const build = () => createDashboardViewModel(registry.list(), new Date(), lastWatchdogAt, nextParentReviewAt);
+      const build = () => createDashboardViewModel(registry.list(), new Date(), lastWatchdogAt, nextParentReviewAt, {
+        findings: lastWatchdogFindings,
+        ...(lastResources ? { resources: lastResources } : {}),
+        config: sessionConfig,
+      });
       const dashboard = new AgentDashboard(build(), theme, {
         close: () => done(),
         checkNow: () => void runWatchdog().then(() => { dashboard.setViewModel(build()); tui.requestRender(); }),
         attach: (id) => { done(); void attachAgent(ctx, requireAgent(id)); },
         steer: (id) => void steerFromDashboard(ctx, id),
+        followUp: (id) => void followUpFromDashboard(ctx, id),
+        togglePause: (id, paused) => void requireOrchestrator().command(id, paused ? "resume" : "pause"),
+        recover: (id) => void recoverFromDashboard(ctx, id),
         abort: (id) => void abortFromDashboard(ctx, id),
+        closeAgent: (id) => void closeFromDashboard(ctx, id),
       });
-      const unsubscribe = registry.subscribe(() => { dashboard.setViewModel(build()); tui.requestRender(); });
-      return { render: (width) => dashboard.render(width), handleInput: (data) => { dashboard.handleInput(data); tui.requestRender(); }, invalidate: () => dashboard.invalidate(), dispose: unsubscribe };
+      const refresh = () => { dashboard.setViewModel(build()); tui.requestRender(); };
+      const unsubscribe = registry.subscribe(refresh);
+      const timer = setInterval(refresh, 1_000);
+      return { render: (width) => dashboard.render(width), handleInput: (data) => { dashboard.handleInput(data); tui.requestRender(); }, invalidate: () => dashboard.invalidate(), dispose: () => { clearInterval(timer); unsubscribe(); } };
     }, { overlay: true, overlayOptions: () => ({ width: process.stdout.columns >= 110 ? "68%" : "94%", maxHeight: "88%", anchor: process.stdout.columns >= 110 ? "right-center" : "center", margin: 1 }) });
   }
 
   function installWidget(ctx: ExtensionContext): void {
     ctx.ui.setWidget("tmux-agents", (tui: TUI, theme) => {
-      const build = () => createDashboardViewModel(registry.list(), new Date(), lastWatchdogAt, nextParentReviewAt);
+      const build = () => createDashboardViewModel(registry.list(), new Date(), lastWatchdogAt, nextParentReviewAt, {
+        findings: lastWatchdogFindings,
+        ...(lastResources ? { resources: lastResources } : {}),
+        config: sessionConfig,
+      });
       const widget = new ProgressWidget(build(), theme);
-      const unsubscribe = registry.subscribe(() => { widget.setViewModel(build()); tui.requestRender(); });
-      clearWidget = unsubscribe;
-      return Object.assign(widget, { dispose: unsubscribe });
+      const refresh = () => { widget.setViewModel(build()); tui.requestRender(); };
+      const unsubscribe = registry.subscribe(refresh);
+      const timer = setInterval(refresh, 1_000);
+      const dispose = () => { clearInterval(timer); unsubscribe(); };
+      clearWidget = dispose;
+      return Object.assign(widget, { dispose });
     });
   }
 
   async function runWatchdog(): Promise<WatchdogFinding[]> {
+    if (watchdogRun) return watchdogRun;
+    watchdogRun = runWatchdogOnce().finally(() => { watchdogRun = undefined; });
+    return watchdogRun;
+  }
+
+  async function runWatchdogOnce(): Promise<WatchdogFinding[]> {
     if (!watchdog) throw new Error("Watchdog is not initialized");
     const findings = await watchdog.check();
     lastWatchdogAt = new Date();
+    lastWatchdogFindings = findings;
+    if (sessionConfig.autoRemediateStuck) await remediate(findings);
     if (findings.length) wakeParent(`Watchdog findings:\n${formatFindings(findings)}\nInspect and remediate affected children.`);
     return findings;
+  }
+
+  async function remediate(findings: readonly WatchdogFinding[]): Promise<void> {
+    const manager = requireOrchestrator();
+    const actionableKinds = new Set<WatchdogFinding["kind"]>(["progress_stale", "heartbeat_stale", "process_missing", "tmux_missing", "retries_repeated", "tool_failures"]);
+    const grouped = new Map<string, WatchdogFinding[]>();
+    for (const finding of findings) {
+      if (!actionableKinds.has(finding.kind) || finding.agentId === "queue") continue;
+      grouped.set(finding.agentId, [...(grouped.get(finding.agentId) ?? []), finding]);
+    }
+    for (const agentId of [...remediation.keys()]) if (!grouped.has(agentId)) remediation.delete(agentId);
+    for (const [agentId, agentFindings] of grouped) {
+      const snapshot = manager.get(agentId);
+      if (!snapshot || ["closed", "replaced"].includes(snapshot.status)) continue;
+      const existing = remediation.get(agentId);
+      if (!existing || existing.progressAt !== snapshot.lastProgressAt) {
+        const canSteer = !agentFindings.some((finding) => ["heartbeat_stale", "process_missing", "tmux_missing"].includes(finding.kind));
+        if (canSteer) {
+          await manager.command(agentId, "steer", `Supervisor diagnostic: progress appears stuck (${agentFindings.map((item) => item.message).join("; ")}). Report your current blocker, preserve partial work, and proceed with the smallest concrete next step.`);
+        }
+        remediation.set(agentId, { firstSeenAt: Date.now(), stage: "diagnosed", progressAt: snapshot.lastProgressAt });
+        continue;
+      }
+      const elapsed = Date.now() - existing.firstSeenAt;
+      if (existing.stage === "diagnosed" && elapsed >= sessionConfig.remediationGraceMs) {
+        if (agentFindings.some((finding) => ["heartbeat_stale", "process_missing", "tmux_missing"].includes(finding.kind))) {
+          const replacement = await manager.replace(agentId, `Watchdog recovery after ${agentFindings.map((item) => item.kind).join(", ")}`);
+          remediation.set(agentId, { ...existing, stage: "replaced" });
+          wakeParent(`Watchdog replaced ${agentId} with ${replacement.agentId}.`);
+        } else {
+          await manager.command(agentId, "restart");
+          remediation.set(agentId, { ...existing, stage: "restarted" });
+          wakeParent(`Watchdog restarted ${agentId} after the diagnostic grace period.`);
+        }
+      } else if (existing.stage === "restarted" && elapsed >= sessionConfig.remediationGraceMs * 2) {
+        const replacement = await manager.replace(agentId, "No progress after watchdog diagnostic and RPC restart");
+        remediation.set(agentId, { ...existing, stage: "replaced" });
+        wakeParent(`Watchdog replaced ${agentId} with ${replacement.agentId} after restart did not recover progress.`);
+      }
+    }
   }
 
   async function supervise(): Promise<void> {
@@ -348,8 +506,23 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
   }
 
   async function steerFromDashboard(ctx: ExtensionCommandContext, id: string): Promise<void> {
-    const message = await ctx.ui.input(`Steer ${id}`, "Instruction");
+    const message = await ctx.ui.editor(`Steer ${id} now`, "");
     if (message) await requireOrchestrator().command(id, "steer", message);
+  }
+
+  async function followUpFromDashboard(ctx: ExtensionCommandContext, id: string): Promise<void> {
+    const message = await ctx.ui.editor(`Follow up after ${id}'s current work`, "");
+    if (message) await requireOrchestrator().command(id, "follow_up", message);
+  }
+
+  async function recoverFromDashboard(ctx: ExtensionCommandContext, id: string): Promise<void> {
+    const action = await ctx.ui.select(`Recover ${id}`, ["Restart RPC session", "Replace agent with worktree handoff"]);
+    if (action === "Restart RPC session") await requireOrchestrator().command(id, "restart");
+    if (action === "Replace agent with worktree handoff") await requireOrchestrator().replace(id, "Replacement requested from dashboard");
+  }
+
+  async function closeFromDashboard(ctx: ExtensionCommandContext, id: string): Promise<void> {
+    if (await ctx.ui.confirm(`Close and clean ${id}?`, "Dirty worktrees are retained.")) await requireOrchestrator().closeAndClean(id, ctx.cwd);
   }
 
   async function abortFromDashboard(ctx: ExtensionCommandContext, id: string): Promise<void> {
@@ -383,7 +556,12 @@ function required(value: string | undefined, name: string): string {
   return value.trim();
 }
 function formatAgent(agent: AgentSnapshot): string {
-  return `${agent.agentId} [${agent.status}]${agent.task ? `\nTask: ${agent.task}` : ""}${agent.currentTool ? `\nCurrent: ${agent.currentTool}` : ""}${agent.worktree ? `\nWorktree: ${agent.worktree}` : ""}${agent.tmuxTarget ? `\ntmux: ${agent.tmuxTarget}` : ""}`;
+  return `${agent.agentId} [${agent.status}] · ${agent.priority ?? "normal"}/${agent.weight ?? (agent.worktree ? "heavy" : "light")}` +
+    `${agent.task ? `\nTask: ${agent.task}` : ""}${agent.currentTool ? `\nCurrent: ${agent.currentTool}` : ""}` +
+    `\nHeartbeat: ${agent.lastHeartbeatAt}\nProgress: ${agent.lastProgressAt}\nQueue: ${agent.queuedMessages}` +
+    `\nUsage: ${agent.usage.inputTokens} in · ${agent.usage.outputTokens} out · $${agent.usage.cost.toFixed(4)}` +
+    `${agent.worktree ? `\nWorktree: ${agent.worktree}` : ""}${agent.branch ? `\nBranch: ${agent.branch}${agent.baseCommit ? ` from ${agent.baseCommit}` : ""}` : ""}` +
+    `${agent.tmuxTarget ? `\ntmux: ${agent.tmuxTarget}` : ""}${agent.replaces ? `\nReplaces: ${agent.replaces}` : ""}${agent.replacedBy ? `\nReplaced by: ${agent.replacedBy}` : ""}`;
 }
 function formatAgents(agents: readonly AgentSnapshot[]): string {
   return agents.length ? agents.map((agent) => `${agent.agentId} [${agent.status}] ${agent.currentTool ?? agent.task ?? "idle"}`).join("\n") : "No persistent agents.";

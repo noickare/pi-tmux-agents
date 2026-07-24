@@ -1,7 +1,7 @@
 # PRD: Persistent tmux Subagents for Pi
 
 **Date:** 2026-07-23  
-**Status:** Approved  
+**Status:** Implemented in v0.2.0
 **Type:** Feature
 
 ## Problem Statement

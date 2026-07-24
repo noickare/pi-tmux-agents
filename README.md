@@ -2,15 +2,17 @@
 
 Persistent, steerable, tmux-backed subagents for [pi](https://github.com/earendil-works/pi-mono), with isolated Git worktrees, autonomous parent orchestration, resource-aware scheduling, watchdog supervision, and a responsive terminal UI.
 
-> **Status:** Initial open-source release candidate. See the [approved PRD](docs/PRD.md).
+> **Status:** Public, production-oriented v0.2 release. See the [approved PRD](docs/PRD.md).
 
 ## Features
 
 - Persistent pi RPC sessions in readable tmux windows
 - Repeated prompts, immediate steering, and queued follow-ups
 - Dedicated Git worktrees and branches for mutating agents
-- Resource-aware durable admission queue without a fixed agent limit
-- Heartbeat, process, progress, tmux, and retry supervision
+- Priority- and resource-aware durable admission queue without a fixed agent limit
+- Critical-pressure auto-pause and recovery with parent resource reservations
+- Heartbeat, process, progress, tmux, worktree, resource, queue, retry, tool-failure, and extension-UI supervision
+- Staged diagnostic steering, restart, and worktree-preserving replacement
 - Five-minute parent reviews and configurable idle expiry
 - Automatic parent wakeups for completion and attention states
 - Restart-safe command acknowledgement, replay, locks, and snapshots
@@ -75,6 +77,11 @@ The parent uses the `tmux_agent` tool. Direct commands are also available:
 /agents setup                   Show non-destructive setup guidance
 /agents attach <id>             Open the agent's tmux window
 /agents steer <id> <message>    Steer a running agent
+/agents follow-up <id> <message> Queue a follow-up
+/agents replace <id> [reason]    Replace with worktree/context handoff
+/agents diff <id>                Inspect changes from the base commit
+/agents validate <id> <argv...>  Run argv-safe validation in the agent cwd
+/agents clean [--discard]        Clean terminal-agent worktrees
 /agents-doctor                  Alias for /agents doctor
 /agents-setup                   Alias for /agents setup
 ```
@@ -82,8 +89,10 @@ The parent uses the `tmux_agent` tool. Direct commands are also available:
 Dashboard keys:
 
 ```text
-↑↓ or j/k  navigate        s  steer        o  open tmux
-c          check now       x  abort        Esc close
+↑↓ or j/k  navigate       Enter  details     Tab  cycle views
+s          steer          f      follow-up   p    pause/resume
+r          restart/replace o      open tmux   c    check now
+x          abort          d      close       Esc  back/close
 ```
 
 ## Agent definitions
@@ -119,7 +128,18 @@ Trusted project override: `.pi/tmux-agents.json`
   "schedulerIntervalMs": 5000,
   "idleTimeoutMs": 14400000,
   "parentReservedCpu": 1,
-  "parentReservedMemoryBytes": 1073741824
+  "parentReservedMemoryBytes": 1073741824,
+  "minimumFreeMemoryBytes": 2147483648,
+  "criticalFreeMemoryBytes": 536870912,
+  "minimumFreeDiskBytes": 5368709120,
+  "maximumLoadPerAvailableCpu": 1.25,
+  "autoPauseOnCritical": true,
+  "autoRemediateStuck": true,
+  "remediationGraceMs": 120000,
+  "resourceRecoveryStableMs": 30000,
+  "queueStaleMs": 1800000,
+  "uiRequestStaleMs": 60000,
+  "animationEnabled": true
 }
 ```
 

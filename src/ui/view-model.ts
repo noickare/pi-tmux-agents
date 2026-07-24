@@ -1,4 +1,7 @@
-import type { AgentSnapshot, AgentStatus } from "../core/protocol.js";
+import type { TmuxAgentsConfig } from "../core/config.js";
+import type { AgentActivity, AgentPriority, AgentSnapshot, AgentStatus, AgentUsage, AgentWeight } from "../core/protocol.js";
+import type { ResourceSnapshot } from "../services/scheduler.js";
+import type { WatchdogFinding } from "../services/watchdog.js";
 
 export interface AgentRowViewModel {
   id: string;
@@ -9,18 +12,40 @@ export interface AgentRowViewModel {
   task: string;
   currentActivity: string;
   elapsed: string;
+  heartbeatAge: string;
+  progressAge: string;
   queuedMessages: number;
+  priority: AgentPriority;
+  weight: AgentWeight;
+  usage: AgentUsage;
+  activity: readonly AgentActivity[];
   worktree?: string;
   branch?: string;
+  baseCommit?: string;
   tmuxTarget?: string;
+  model?: string;
   statusReason?: string;
+  pendingUiRequest?: string;
+  replaces?: string;
+  replacedBy?: string;
 }
 
 export interface DashboardViewModel {
   rows: readonly AgentRowViewModel[];
   counts: Readonly<Record<"running" | "queued" | "idle" | "attention", number>>;
   watchdogText: string;
+  nextWatchdogText: string;
   parentReviewText: string;
+  stuckThresholdText: string;
+  diagnostics: readonly WatchdogFinding[];
+  resourceLines: readonly string[];
+  settingLines: readonly string[];
+}
+
+export interface DashboardSupplement {
+  findings?: readonly WatchdogFinding[];
+  resources?: ResourceSnapshot;
+  config?: TmuxAgentsConfig;
 }
 
 const STATUS_PRESENTATION: Readonly<Record<AgentStatus, { icon: string; label: string }>> = {
@@ -47,9 +72,13 @@ export function createDashboardViewModel(
   now = new Date(),
   lastWatchdogAt?: Date,
   nextParentReviewOverride?: Date,
+  supplement: DashboardSupplement = {},
 ): DashboardViewModel {
   const rows = snapshots.map((snapshot) => {
-    const presentation = STATUS_PRESENTATION[snapshot.status];
+    const basePresentation = STATUS_PRESENTATION[snapshot.status];
+    const presentation = snapshot.status === "running" && supplement.config?.animationEnabled === false
+      ? { ...basePresentation, icon: "▶" }
+      : basePresentation;
     return {
       id: snapshot.agentId,
       name: snapshot.name,
@@ -59,11 +88,22 @@ export function createDashboardViewModel(
       task: snapshot.task ?? "No task assigned",
       currentActivity: snapshot.currentTool ?? snapshot.statusReason ?? presentation.label,
       elapsed: formatDuration(now.getTime() - new Date(snapshot.startedAt).getTime()),
+      heartbeatAge: `${formatDuration(now.getTime() - new Date(snapshot.lastHeartbeatAt).getTime())} ago`,
+      progressAge: `${formatDuration(now.getTime() - new Date(snapshot.lastProgressAt).getTime())} ago`,
       queuedMessages: snapshot.queuedMessages,
+      priority: snapshot.priority ?? "normal",
+      weight: snapshot.weight ?? (snapshot.worktree ? "heavy" : "light"),
+      usage: snapshot.usage,
+      activity: snapshot.recentActivity ?? [],
       ...(snapshot.worktree === undefined ? {} : { worktree: snapshot.worktree }),
       ...(snapshot.branch === undefined ? {} : { branch: snapshot.branch }),
+      ...(snapshot.baseCommit === undefined ? {} : { baseCommit: snapshot.baseCommit }),
       ...(snapshot.tmuxTarget === undefined ? {} : { tmuxTarget: snapshot.tmuxTarget }),
+      ...(snapshot.model === undefined ? {} : { model: snapshot.model }),
       ...(snapshot.statusReason === undefined ? {} : { statusReason: snapshot.statusReason }),
+      ...(snapshot.pendingUiRequest === undefined ? {} : { pendingUiRequest: `${snapshot.pendingUiRequest.method} since ${snapshot.pendingUiRequest.createdAt}` }),
+      ...(snapshot.replaces === undefined ? {} : { replaces: snapshot.replaces }),
+      ...(snapshot.replacedBy === undefined ? {} : { replacedBy: snapshot.replacedBy }),
     } satisfies AgentRowViewModel;
   });
 
@@ -72,6 +112,9 @@ export function createDashboardViewModel(
     .filter((value): value is string => value !== undefined)
     .map((value) => new Date(value).getTime())
     .sort((a, b) => a - b)[0];
+  const nextWatchdog = lastWatchdogAt && supplement.config
+    ? lastWatchdogAt.getTime() + supplement.config.watchdogIntervalMs
+    : undefined;
 
   return {
     rows,
@@ -82,11 +125,12 @@ export function createDashboardViewModel(
       attention: snapshots.filter((item) => ["blocked", "failed", "orphaned"].includes(item.status)).length,
     },
     watchdogText: lastWatchdogAt ? `checked ${formatDuration(now.getTime() - lastWatchdogAt.getTime())} ago` : "not checked",
-    parentReviewText: nextReview === undefined
-      ? "not scheduled"
-      : nextReview >= now.getTime()
-        ? `in ${formatDuration(nextReview - now.getTime())}`
-        : `overdue by ${formatDuration(now.getTime() - nextReview)}`,
+    nextWatchdogText: nextWatchdog === undefined ? "not scheduled" : countdown(nextWatchdog, now.getTime()),
+    parentReviewText: nextReview === undefined ? "not scheduled" : countdown(nextReview, now.getTime()),
+    stuckThresholdText: supplement.config ? formatDuration(supplement.config.progressStaleMs) : "unknown",
+    diagnostics: supplement.findings ?? [],
+    resourceLines: resourceLines(supplement.resources),
+    settingLines: settingLines(supplement.config),
   };
 }
 
@@ -98,4 +142,36 @@ export function formatDuration(milliseconds: number): string {
   return hours > 0
     ? `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
     : `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function countdown(target: number, now: number): string {
+  return target >= now ? `in ${formatDuration(target - now)}` : `overdue by ${formatDuration(now - target)}`;
+}
+
+function resourceLines(resources?: ResourceSnapshot): string[] {
+  if (!resources) return ["Resource sample pending."];
+  return [
+    `CPU: ${resources.cpuCount} cores · load ${resources.loadAverage1m.toFixed(2)} · active weight ${resources.activeWeight.toFixed(1)}`,
+    `Memory: ${formatBytes(resources.availableMemoryBytes)} available of ${formatBytes(resources.totalMemoryBytes)}`,
+    `Disk: ${formatBytes(resources.availableDiskBytes)} available`,
+    `Parent reservation: ${resources.parentReservedCpu} CPU · ${formatBytes(resources.parentReservedMemoryBytes)} memory`,
+    `Provider backoff: ${resources.providerBackoff ? "active" : "no"}`,
+  ];
+}
+
+function settingLines(config?: TmuxAgentsConfig): string[] {
+  if (!config) return ["Settings unavailable."];
+  return [
+    `Watchdog: ${formatDuration(config.watchdogIntervalMs)} · stale heartbeat ${formatDuration(config.heartbeatStaleMs)}`,
+    `Stuck progress: ${formatDuration(config.progressStaleMs)} · remediation grace ${formatDuration(config.remediationGraceMs)}`,
+    `Parent review: ${formatDuration(config.parentReviewIntervalMs)} · idle expiry ${formatDuration(config.idleTimeoutMs)}`,
+    `Critical auto-pause: ${config.autoPauseOnCritical ? "on" : "off"} · recovery stable ${formatDuration(config.resourceRecoveryStableMs)}`,
+    `Auto-remediation: ${config.autoRemediateStuck ? "on" : "off"}`,
+    `Animation: ${config.animationEnabled ? "on" : "off"}`,
+    "Edit ~/.pi/agent/tmux-agents.json or trusted .pi/tmux-agents.json, then /reload.",
+  ];
+}
+
+function formatBytes(value: number): string {
+  return value >= 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(1)}GiB` : `${Math.floor(value / 1024 ** 2)}MiB`;
 }

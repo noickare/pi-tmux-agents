@@ -18,6 +18,21 @@ export type AgentStatus =
   | "closed"
   | "orphaned";
 
+export type AgentPriority = "interactive" | "merge-critical" | "normal" | "speculative";
+export type AgentWeight = "light" | "normal" | "heavy";
+
+export interface AgentActivity {
+  at: string;
+  kind: "status" | "tool" | "message" | "diagnostic" | "command";
+  text: string;
+}
+
+export interface PendingUiRequest {
+  id: string;
+  method: string;
+  createdAt: string;
+}
+
 export type AgentCommandType =
   | "prompt"
   | "steer"
@@ -26,6 +41,8 @@ export type AgentCommandType =
   | "resume"
   | "abort"
   | "restart"
+  | "set_priority"
+  | "replace"
   | "close";
 
 export interface AgentCommand {
@@ -77,10 +94,17 @@ export interface AgentSnapshot {
   status: AgentStatus;
   task?: string;
   statusReason?: string;
+  priority?: AgentPriority;
+  weight?: AgentWeight;
+  mutating?: boolean;
+  parentCwd?: string;
+  replaces?: string;
+  replacedBy?: string;
   currentTool?: string;
   cwd: string;
   worktree?: string;
   branch?: string;
+  baseCommit?: string;
   tmuxTarget?: string;
   model?: string;
   pid?: number;
@@ -93,6 +117,8 @@ export interface AgentSnapshot {
   lastCompletedAt?: string;
   nextParentReviewAt?: string;
   queuedMessages: number;
+  recentActivity?: readonly AgentActivity[];
+  pendingUiRequest?: PendingUiRequest;
   usage: AgentUsage;
   lastSequence: number;
 }
@@ -122,5 +148,5 @@ export function isAgentCommand(value: unknown): value is AgentCommand {
 }
 
 const COMMAND_TYPES = new Set<AgentCommandType>([
-  "prompt", "steer", "follow_up", "pause", "resume", "abort", "restart", "close",
+  "prompt", "steer", "follow_up", "pause", "resume", "abort", "restart", "set_priority", "replace", "close",
 ]);

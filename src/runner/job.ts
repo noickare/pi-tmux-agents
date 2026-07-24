@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { assertSafeId } from "../core/paths.js";
+import type { AgentPriority, AgentWeight } from "../core/protocol.js";
 
 export interface AgentJob {
   protocolVersion: 1;
@@ -12,8 +13,14 @@ export interface AgentJob {
   sessionId: string;
   tmuxTarget: string;
   approveProject: boolean;
+  priority?: AgentPriority;
+  weight?: AgentWeight;
+  mutating?: boolean;
+  parentCwd?: string;
+  replaces?: string;
   worktree?: string;
   branch?: string;
+  baseCommit?: string;
   model?: string;
   tools?: readonly string[];
   systemPrompt?: string;

@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { SpawnAgentInput } from "./orchestrator.js";
+import { PRIORITY_RANK } from "./scheduler.js";
 
 export interface QueuedSpawn {
   id: string;
@@ -16,7 +17,7 @@ export class AdmissionQueue {
   async list(): Promise<QueuedSpawn[]> {
     try {
       const value: unknown = JSON.parse(await readFile(this.path, "utf8"));
-      return Array.isArray(value) ? value as QueuedSpawn[] : [];
+      return Array.isArray(value) ? sortQueue(value as QueuedSpawn[]) : [];
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
@@ -33,10 +34,38 @@ export class AdmissionQueue {
     await this.write((await this.list()).filter((item) => item.id !== id));
   }
 
+  async reprioritize(agentId: string, priority: NonNullable<SpawnAgentInput["priority"]>): Promise<boolean> {
+    const items = await this.list();
+    const item = items.find((candidate) => candidate.agentId === agentId);
+    if (!item) return false;
+    item.input = { ...item.input, priority };
+    await this.write(sortQueue(items));
+    return true;
+  }
+
+  async health(now = Date.now()): Promise<{ count: number; oldestAgeMs: number; duplicateAgentIds: readonly string[] }> {
+    const items = await this.list();
+    const ids = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const item of items) { if (ids.has(item.agentId)) duplicates.add(item.agentId); ids.add(item.agentId); }
+    return {
+      count: items.length,
+      oldestAgeMs: items.reduce((oldest, item) => Math.max(oldest, now - new Date(item.createdAt).getTime()), 0),
+      duplicateAgentIds: [...duplicates],
+    };
+  }
+
   private async write(items: readonly QueuedSpawn[]): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     const temporary = `${this.path}.${process.pid}.${Date.now()}.tmp`;
     await writeFile(temporary, `${JSON.stringify(items, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
     await rename(temporary, this.path);
   }
+}
+
+function sortQueue(items: QueuedSpawn[]): QueuedSpawn[] {
+  return [...items].sort((left, right) => {
+    const priority = PRIORITY_RANK[left.input.priority ?? "normal"] - PRIORITY_RANK[right.input.priority ?? "normal"];
+    return priority || left.createdAt.localeCompare(right.createdAt);
+  });
 }

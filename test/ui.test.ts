@@ -32,6 +32,24 @@ describe("TUI foundations", () => {
     expect(attached).toBe("scout-1");
   });
 
+  it("keeps every dashboard view within width and exposes keyboard actions", () => {
+    const viewModel = createDashboardViewModel(agents, now);
+    const actions: string[] = [];
+    const dashboard = new AgentDashboard(viewModel, plainTheme, {
+      close() {},
+      followUp: () => actions.push("follow-up"),
+      togglePause: () => actions.push("pause"),
+      recover: () => actions.push("recover"),
+      closeAgent: () => actions.push("close-agent"),
+    });
+    for (let index = 0; index < 7; index++) {
+      for (const line of dashboard.render(40)) expect(visibleWidth(line)).toBeLessThanOrEqual(40);
+      dashboard.handleInput("\t");
+    }
+    for (const key of ["f", "p", "r", "d"]) dashboard.handleInput(key);
+    expect(actions).toEqual(["follow-up", "pause", "recover", "close-agent"]);
+  });
+
   it("renders explicit review timing and attention state", () => {
     const viewModel = createDashboardViewModel(agents, now, new Date("2026-07-23T10:01:48.000Z"));
     const text = new ProgressWidget(viewModel, plainTheme).render(120).join("\n");
