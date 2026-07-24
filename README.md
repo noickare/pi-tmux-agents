@@ -2,7 +2,7 @@
 
 Persistent, steerable, tmux-backed subagents for [pi](https://github.com/earendil-works/pi-mono), with isolated Git worktrees, autonomous parent orchestration, resource-aware scheduling, watchdog supervision, and a polished terminal UI.
 
-> **Status:** Planning. See the [approved PRD](docs/PRD.md).
+> **Status:** Early development. See the [approved PRD](docs/PRD.md).
 
 ## Planned capabilities
 
@@ -17,7 +17,19 @@ Persistent, steerable, tmux-backed subagents for [pi](https://github.com/earendi
 
 ## Project status
 
-Implementation has not started. The architecture and product requirements are documented in [`docs/PRD.md`](docs/PRD.md).
+Wave 1 foundations are under development: typed lifecycle and control contracts, durable state storage, tmux and worktree adapters, resource-aware admission, agent discovery, and responsive TUI components. The full architecture and product requirements are documented in [`docs/PRD.md`](docs/PRD.md).
+
+## Development
+
+```bash
+npm install
+npm run validate
+npm run tui:fixtures
+```
+
+- `npm run validate` runs strict TypeScript checking and the test suite.
+- `npm run tui:fixtures` renders narrow and wide dashboard/widget fixtures for visual review.
+- During development, load the extension with `pi -e ./src/extension/index.ts`.
 
 ## License
 
