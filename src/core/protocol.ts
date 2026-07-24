@@ -90,6 +90,7 @@ export interface AgentSnapshot {
   updatedAt: string;
   lastHeartbeatAt: string;
   lastProgressAt: string;
+  lastCompletedAt?: string;
   nextParentReviewAt?: string;
   queuedMessages: number;
   usage: AgentUsage;

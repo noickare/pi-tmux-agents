@@ -29,6 +29,7 @@
     "test:watch": "vitest",
     "tui:fixtures": "tsx scripts/render-fixtures.ts",
     "smoke:runner": "tsx scripts/smoke-runner.ts",
+    "smoke:extension": "tsx scripts/smoke-extension.ts",
     "validate": "npm run check && npm test"
   },
   "pi": {

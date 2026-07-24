@@ -46,6 +46,7 @@ export function createDashboardViewModel(
   snapshots: readonly AgentSnapshot[],
   now = new Date(),
   lastWatchdogAt?: Date,
+  nextParentReviewOverride?: Date,
 ): DashboardViewModel {
   const rows = snapshots.map((snapshot) => {
     const presentation = STATUS_PRESENTATION[snapshot.status];
@@ -66,7 +67,7 @@ export function createDashboardViewModel(
     } satisfies AgentRowViewModel;
   });
 
-  const nextReview = snapshots
+  const nextReview = nextParentReviewOverride?.getTime() ?? snapshots
     .map((item) => item.nextParentReviewAt)
     .filter((value): value is string => value !== undefined)
     .map((value) => new Date(value).getTime())

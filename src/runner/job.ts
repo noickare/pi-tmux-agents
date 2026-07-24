@@ -12,6 +12,8 @@ export interface AgentJob {
   sessionId: string;
   tmuxTarget: string;
   approveProject: boolean;
+  worktree?: string;
+  branch?: string;
   model?: string;
   tools?: readonly string[];
   systemPrompt?: string;
