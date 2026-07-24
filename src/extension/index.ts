@@ -382,7 +382,12 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
       const unsubscribe = registry.subscribe(refresh);
       const timer = setInterval(refresh, 1_000);
       return { render: (width) => dashboard.render(width), handleInput: (data) => { dashboard.handleInput(data); tui.requestRender(); }, invalidate: () => dashboard.invalidate(), dispose: () => { clearInterval(timer); unsubscribe(); } };
-    }, { overlay: true, overlayOptions: () => ({ width: liveTerminalWidth >= 110 ? "68%" : "94%", maxHeight: "88%", anchor: liveTerminalWidth >= 110 ? "right-center" : "center", margin: 1 }) });
+    }, { overlay: true, overlayOptions: () => ({
+      width: liveTerminalWidth < 60 ? "100%" : liveTerminalWidth >= 110 ? "68%" : "94%",
+      maxHeight: liveTerminalWidth < 60 ? "100%" : "88%",
+      anchor: liveTerminalWidth >= 110 ? "right-center" : "center",
+      margin: liveTerminalWidth < 60 ? 0 : 1,
+    }) });
   }
 
   function installWidget(ctx: ExtensionContext): void {
