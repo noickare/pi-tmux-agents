@@ -13,17 +13,25 @@ export class ResourceProbe {
   constructor(private readonly run: CommandRunner) {}
 
   async snapshot(path: string, options: ResourceProbeOptions = {}): Promise<ResourceSnapshot> {
+    const activeBuildWeight = await this.activeBuildWeight();
     return {
       cpuCount: cpus().length,
       loadAverage1m: loadavg()[0] ?? 0,
       totalMemoryBytes: totalmem(),
       availableMemoryBytes: freemem(),
       availableDiskBytes: await this.availableDisk(path),
-      activeWeight: options.activeWeight ?? 0,
+      activeWeight: (options.activeWeight ?? 0) + activeBuildWeight,
       parentReservedCpu: options.parentReservedCpu ?? 1,
       parentReservedMemoryBytes: options.parentReservedMemoryBytes ?? 1024 ** 3,
       providerBackoff: options.providerBackoff ?? false,
     };
+  }
+
+  private async activeBuildWeight(): Promise<number> {
+    const result = await this.run("ps", ["-axo", "command="]);
+    if (result.code !== 0) return 0;
+    const patterns = [/\b(?:npm|pnpm|yarn|bun) (?:test|run (?:build|test|lint|check))\b/, /\b(?:cargo test|go test|pytest|vitest|jest|tsc)\b/];
+    return Math.min(4, result.stdout.split("\n").filter((line) => patterns.some((pattern) => pattern.test(line))).length * 0.5);
   }
 
   private async availableDisk(path: string): Promise<number> {

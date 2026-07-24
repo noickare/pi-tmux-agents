@@ -25,8 +25,31 @@ export class WorktreeService {
       `create worktree ${basename(spec.path)}`);
   }
 
+  async currentCommit(path: string): Promise<string> {
+    return requireSuccess(await this.run("git", ["rev-parse", "HEAD"], { cwd: path }), "read Git commit").stdout.trim();
+  }
+
   async status(worktreePath: string): Promise<string> {
     return requireSuccess(await this.run("git", ["status", "--short", "--branch"], { cwd: worktreePath }), "read worktree status").stdout;
+  }
+
+  async diff(worktreePath: string, base = "HEAD"): Promise<string> {
+    return requireSuccess(await this.run("git", ["diff", "--no-ext-diff", base, "--", "."], { cwd: worktreePath }), "read worktree diff").stdout;
+  }
+
+  async validate(worktreePath: string, command: readonly string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+    const [executable, ...args] = command;
+    if (!executable) throw new Error("Validation requires an executable and optional arguments");
+    return this.run(executable, args, { cwd: worktreePath, timeout: 30 * 60_000 });
+  }
+
+  async isValid(worktreePath: string, expectedBranch?: string): Promise<{ valid: boolean; detail: string }> {
+    const result = await this.run("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: worktreePath });
+    if (result.code !== 0) return { valid: false, detail: result.stderr.trim() || "not a Git worktree" };
+    const branch = result.stdout.trim();
+    return expectedBranch && branch !== expectedBranch
+      ? { valid: false, detail: `expected ${expectedBranch}, found ${branch}` }
+      : { valid: true, detail: branch };
   }
 
   async merge(repoRoot: string, branch: string): Promise<void> {

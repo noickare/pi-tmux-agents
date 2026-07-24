@@ -3,6 +3,7 @@ import { AgentDashboard } from "../src/ui/dashboard.js";
 import { ProgressWidget } from "../src/ui/progress-widget.js";
 import { createDashboardViewModel } from "../src/ui/view-model.js";
 import type { AgentSnapshot } from "../src/core/protocol.js";
+import { DEFAULT_CONFIG } from "../src/core/config.js";
 
 const theme = {
   fg: (_color: string, text: string) => text,
@@ -34,13 +35,25 @@ const agents: AgentSnapshot[] = [
   { ...base, agentId: "scout-1", name: "scout-1", status: "completed", task: "Inspect auth", currentTool: "3 findings", queuedMessages: 0 },
   { ...base, agentId: "reviewer-3", name: "reviewer-3", status: "blocked", statusReason: "Waiting for worker", currentTool: "Waiting for worker", queuedMessages: 0 },
 ];
-const vm = createDashboardViewModel(agents, new Date("2026-07-23T10:02:00.000Z"), new Date("2026-07-23T10:01:48.000Z"));
+const vm = createDashboardViewModel(agents, new Date("2026-07-23T10:02:00.000Z"), new Date("2026-07-23T10:01:48.000Z"), undefined, {
+  config: DEFAULT_CONFIG,
+  resources: {
+    cpuCount: 12, loadAverage1m: 2.1, totalMemoryBytes: 32 * 1024 ** 3, availableMemoryBytes: 18 * 1024 ** 3,
+    availableDiskBytes: 120 * 1024 ** 3, activeWeight: 3.5, parentReservedCpu: 1,
+    parentReservedMemoryBytes: 1024 ** 3, providerBackoff: false,
+  },
+  findings: [{ agentId: "reviewer-3", severity: "warning", kind: "progress_stale", message: "No meaningful progress for 10m" }],
+});
 
 const printable = (lines: readonly string[]) => lines.join("\n").replaceAll(/\x1b\[[0-9;]*m/g, "");
 
 for (const width of [40, 120]) {
-  console.log(`\n=== Dashboard ${width} columns ===`);
-  console.log(printable(new AgentDashboard(vm, theme, { close() {} }).render(width)));
+  const dashboard = new AgentDashboard(vm, theme, { close() {} });
+  for (const view of ["overview", "details", "queue", "activity", "resources", "diagnostics", "settings"]) {
+    console.log(`\n=== Dashboard ${view} ${width} columns ===`);
+    console.log(printable(dashboard.render(width)));
+    dashboard.handleInput("\t");
+  }
   console.log(`\n=== Widget ${width} columns ===`);
   console.log(printable(new ProgressWidget(vm, theme).render(width)));
 }

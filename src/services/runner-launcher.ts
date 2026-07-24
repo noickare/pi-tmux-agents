@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createCommand } from "../core/protocol.js";
+import { createCommand, type AgentPriority, type AgentWeight } from "../core/protocol.js";
 import { AgentStateStore } from "../core/state-store.js";
 import type { AgentJob } from "../runner/job.js";
 import { writeAgentJob } from "../runner/job.js";
@@ -20,8 +20,14 @@ export interface LaunchAgentInput {
   tools?: readonly string[];
   systemPrompt?: string;
   approveProject?: boolean;
+  priority?: AgentPriority;
+  weight?: AgentWeight;
+  mutating?: boolean;
+  parentCwd?: string;
+  replaces?: string;
   worktree?: string;
   branch?: string;
+  baseCommit?: string;
 }
 
 export interface LaunchedAgent {
@@ -46,8 +52,14 @@ export class RunnerLauncher {
       sessionId: randomUUID(),
       tmuxTarget: target,
       approveProject: input.approveProject ?? false,
+      ...(input.priority ? { priority: input.priority } : {}),
+      ...(input.weight ? { weight: input.weight } : {}),
+      ...(input.mutating === undefined ? {} : { mutating: input.mutating }),
+      ...(input.parentCwd ? { parentCwd: input.parentCwd } : {}),
+      ...(input.replaces ? { replaces: input.replaces } : {}),
       ...(input.worktree ? { worktree: input.worktree } : {}),
       ...(input.branch ? { branch: input.branch } : {}),
+      ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}),
       ...(input.model ? { model: input.model } : {}),
       ...(input.tools?.length ? { tools: input.tools } : {}),
       ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),

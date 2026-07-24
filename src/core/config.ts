@@ -12,6 +12,17 @@ export interface TmuxAgentsConfig {
   idleTimeoutMs: number;
   parentReservedCpu: number;
   parentReservedMemoryBytes: number;
+  minimumFreeMemoryBytes: number;
+  criticalFreeMemoryBytes: number;
+  minimumFreeDiskBytes: number;
+  maximumLoadPerAvailableCpu: number;
+  autoPauseOnCritical: boolean;
+  autoRemediateStuck: boolean;
+  remediationGraceMs: number;
+  resourceRecoveryStableMs: number;
+  queueStaleMs: number;
+  uiRequestStaleMs: number;
+  animationEnabled: boolean;
 }
 
 export const DEFAULT_CONFIG: TmuxAgentsConfig = {
@@ -24,6 +35,17 @@ export const DEFAULT_CONFIG: TmuxAgentsConfig = {
   idleTimeoutMs: 4 * 60 * 60_000,
   parentReservedCpu: 1,
   parentReservedMemoryBytes: 1024 ** 3,
+  minimumFreeMemoryBytes: 2 * 1024 ** 3,
+  criticalFreeMemoryBytes: 512 * 1024 ** 2,
+  minimumFreeDiskBytes: 5 * 1024 ** 3,
+  maximumLoadPerAvailableCpu: 1.25,
+  autoPauseOnCritical: true,
+  autoRemediateStuck: true,
+  remediationGraceMs: 2 * 60_000,
+  resourceRecoveryStableMs: 30_000,
+  queueStaleMs: 30 * 60_000,
+  uiRequestStaleMs: 60_000,
+  animationEnabled: true,
 };
 
 export async function loadConfig(cwd: string, agentDir: string, projectTrusted: boolean): Promise<TmuxAgentsConfig> {
@@ -36,9 +58,18 @@ export function validateConfig(value: TmuxAgentsConfig): TmuxAgentsConfig {
   const positive: Array<keyof TmuxAgentsConfig> = [
     "monitorIntervalMs", "watchdogIntervalMs", "heartbeatStaleMs", "progressStaleMs",
     "parentReviewIntervalMs", "schedulerIntervalMs", "idleTimeoutMs", "parentReservedMemoryBytes",
+    "minimumFreeMemoryBytes", "criticalFreeMemoryBytes", "minimumFreeDiskBytes", "maximumLoadPerAvailableCpu",
+    "remediationGraceMs", "resourceRecoveryStableMs", "queueStaleMs", "uiRequestStaleMs",
   ];
-  for (const key of positive) if (!Number.isFinite(value[key]) || value[key] <= 0) throw new Error(`Invalid tmux-agents config: ${key}`);
+  for (const key of positive) {
+    const candidate = value[key];
+    if (typeof candidate !== "number" || !Number.isFinite(candidate) || candidate <= 0) throw new Error(`Invalid tmux-agents config: ${key}`);
+  }
   if (!Number.isInteger(value.parentReservedCpu) || value.parentReservedCpu < 0) throw new Error("Invalid tmux-agents config: parentReservedCpu");
+  for (const key of ["autoPauseOnCritical", "autoRemediateStuck", "animationEnabled"] as const) {
+    if (typeof value[key] !== "boolean") throw new Error(`Invalid tmux-agents config: ${key}`);
+  }
+  if (value.criticalFreeMemoryBytes > value.minimumFreeMemoryBytes) throw new Error("criticalFreeMemoryBytes must not exceed minimumFreeMemoryBytes");
   return value;
 }
 

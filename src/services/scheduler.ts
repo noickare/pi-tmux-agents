@@ -1,4 +1,13 @@
-export type TaskWeight = "light" | "normal" | "heavy";
+import type { AgentPriority, AgentWeight } from "../core/protocol.js";
+
+export type TaskWeight = AgentWeight;
+
+export const PRIORITY_RANK: Readonly<Record<AgentPriority, number>> = {
+  interactive: 0,
+  "merge-critical": 1,
+  normal: 2,
+  speculative: 3,
+};
 
 export interface ResourceSnapshot {
   cpuCount: number;
@@ -35,6 +44,19 @@ export const DEFAULT_THRESHOLDS: SchedulerThresholds = {
   maximumLoadPerAvailableCpu: 1.25,
 };
 
+export function assessResourcePressure(
+  resources: ResourceSnapshot,
+  thresholds: SchedulerThresholds = DEFAULT_THRESHOLDS,
+): AdmissionDecision["pressure"] {
+  const usableCpu = Math.max(1, resources.cpuCount - resources.parentReservedCpu);
+  const usableMemory = resources.availableMemoryBytes - resources.parentReservedMemoryBytes;
+  const loadPressure = Math.max(resources.loadAverage1m / usableCpu, resources.activeWeight / usableCpu);
+  if (usableMemory <= thresholds.criticalFreeMemoryBytes || resources.availableDiskBytes <= thresholds.minimumFreeDiskBytes ||
+    loadPressure > thresholds.maximumLoadPerAvailableCpu * 2) return "critical";
+  if (resources.providerBackoff || usableMemory <= thresholds.minimumFreeMemoryBytes || loadPressure > thresholds.maximumLoadPerAvailableCpu) return "elevated";
+  return "normal";
+}
+
 export function decideAdmission(
   resources: ResourceSnapshot,
   taskWeight: TaskWeight,
@@ -52,6 +74,9 @@ export function decideAdmission(
   }
   if (resources.availableDiskBytes <= thresholds.minimumFreeDiskBytes) {
     return { admitted: false, reason: "insufficient disk reservation", pressure: "critical", score };
+  }
+  if (score > thresholds.maximumLoadPerAvailableCpu * 2) {
+    return { admitted: false, reason: "critical CPU or active-work pressure", pressure: "critical", score };
   }
   if (resources.providerBackoff) {
     return { admitted: false, reason: "provider is backing off", pressure: "elevated", score };
