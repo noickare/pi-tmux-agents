@@ -1,3 +1,4 @@
+import { access } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { assertSafeId } from "../core/paths.js";
 import type { CommandRunner } from "./command-runner.js";
@@ -58,11 +59,22 @@ export class WorktreeService {
   }
 
   async remove(repoRoot: string, worktreePath: string, force = false): Promise<void> {
-    requireSuccess(await this.run("git", ["worktree", "remove", ...(force ? ["--force"] : []), worktreePath], { cwd: repoRoot }), "remove worktree");
+    if (!await pathExists(worktreePath)) return;
+    const result = await this.run("git", ["worktree", "remove", ...(force ? ["--force"] : []), worktreePath], { cwd: repoRoot });
+    if (result.code !== 0 && await pathExists(worktreePath)) requireSuccess(result, "remove worktree");
   }
 
   async deleteBranch(repoRoot: string, branch: string, force = false): Promise<void> {
     if (!branch.startsWith("agent/")) throw new Error(`Invalid agent branch: ${branch}`);
-    requireSuccess(await this.run("git", ["branch", force ? "-D" : "-d", branch], { cwd: repoRoot }), `delete ${branch}`);
+    const result = await this.run("git", ["branch", force ? "-D" : "-d", branch], { cwd: repoRoot });
+    if (result.code === 0) return;
+    const remaining = await this.run("git", ["branch", "--list", branch], { cwd: repoRoot });
+    if (remaining.code === 0 && !remaining.stdout.trim()) return;
+    requireSuccess(result, `delete ${branch}`);
   }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try { await access(path); return true; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
 }

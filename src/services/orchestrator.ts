@@ -73,6 +73,7 @@ export class AgentOrchestrator {
   private readonly queue: AdmissionQueue;
   private readonly automaticallyPaused = new Set<string>();
   private readonly automaticResumePending = new Set<string>();
+  private readonly cleanupRuns = new Map<string, Promise<void>>();
   private normalPressureSince: number | undefined;
 
   constructor(
@@ -118,12 +119,13 @@ export class AgentOrchestrator {
     payload: Readonly<Record<string, unknown>> = {},
   ): Promise<string> {
     const snapshot = this.requireAgent(agentId);
+    const effectiveType = snapshot.status === "idle" && (type === "steer" || type === "follow_up") ? "prompt" : type;
     const id = randomUUID();
     const commandPayload = { ...payload, ...(message === undefined ? {} : { message }) };
     await new AgentStateStore(getAgentStateDir(this.parentSessionId, snapshot.agentId, this.agentDir)).appendCommand(createCommand({
       id,
       agentId: snapshot.agentId,
-      type,
+      type: effectiveType,
       ...(Object.keys(commandPayload).length ? { payload: commandPayload } : {}),
     }));
     return id;
@@ -218,7 +220,17 @@ export class AgentOrchestrator {
 
   async closeAndClean(agentId: string, parentRepo: string, discard = false): Promise<void> {
     const snapshot = this.requireAgent(agentId);
-    if (snapshot.replacedBy) throw new Error(`Worktree ownership was handed to ${snapshot.replacedBy}; clean the replacement instead`);
+    if (snapshot.replacedBy) return this.closeAndClean(snapshot.replacedBy, parentRepo, discard);
+    const existing = this.cleanupRuns.get(snapshot.agentId);
+    if (existing) return existing;
+    const operation = this.closeAndCleanOwned(snapshot, parentRepo, discard).finally(() => {
+      if (this.cleanupRuns.get(snapshot.agentId) === operation) this.cleanupRuns.delete(snapshot.agentId);
+    });
+    this.cleanupRuns.set(snapshot.agentId, operation);
+    return operation;
+  }
+
+  private async closeAndCleanOwned(snapshot: AgentSnapshot, parentRepo: string, discard: boolean): Promise<void> {
     const activeOwner = snapshot.worktree && this.registry.list().find((item) => item.agentId !== snapshot.agentId && item.worktree === snapshot.worktree && !isTerminalStatus(item.status));
     if (activeOwner) throw new Error(`Worktree is still owned by active agent ${activeOwner.agentId}`);
     const runnerMayBeAlive = snapshot.pid !== undefined && processAlive(snapshot.pid);
@@ -233,7 +245,7 @@ export class AgentOrchestrator {
   async clean(parentRepo: string, discard = false): Promise<{ cleaned: string[]; retained: Array<{ agentId: string; reason: string }> }> {
     const cleaned: string[] = [];
     const retained: Array<{ agentId: string; reason: string }> = [];
-    for (const snapshot of this.registry.list().filter((item) => isTerminalStatus(item.status))) {
+    for (const snapshot of this.registry.list().filter((item) => isTerminalStatus(item.status) && !item.replacedBy)) {
       try { await this.closeAndClean(snapshot.agentId, parentRepo, discard); cleaned.push(snapshot.agentId); }
       catch (error) { retained.push({ agentId: snapshot.agentId, reason: (error as Error).message }); }
     }

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1 — 2026-07-24
+
+### Fixed
+
+- Use macOS memory-pressure availability instead of immediately free pages, preventing healthy systems from being permanently classified as critical
+- Preserve the first word in inline `/agents new <task>` commands
+- Route steering and follow-ups sent to idle agents as new prompts
+- Make dashboard overlays opaque, theme-aware, and responsive to live terminal resizing
+- Deduplicate concurrent close/cleanup operations and make Git cleanup idempotent
+- Surface dashboard action failures instead of allowing unhandled rejections to terminate pi
+- Clear stale tool activity when an agent is closed or replaced
+- Follow replacement lineage during cleanup without retaining superseded worktrees
+
 ## 0.2.0 — 2026-07-24
 
 ### Added
