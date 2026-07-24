@@ -20,6 +20,8 @@ export interface LaunchAgentInput {
   tools?: readonly string[];
   systemPrompt?: string;
   approveProject?: boolean;
+  worktree?: string;
+  branch?: string;
 }
 
 export interface LaunchedAgent {
@@ -44,6 +46,8 @@ export class RunnerLauncher {
       sessionId: randomUUID(),
       tmuxTarget: target,
       approveProject: input.approveProject ?? false,
+      ...(input.worktree ? { worktree: input.worktree } : {}),
+      ...(input.branch ? { branch: input.branch } : {}),
       ...(input.model ? { model: input.model } : {}),
       ...(input.tools?.length ? { tools: input.tools } : {}),
       ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),

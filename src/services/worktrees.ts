@@ -29,7 +29,17 @@ export class WorktreeService {
     return requireSuccess(await this.run("git", ["status", "--short", "--branch"], { cwd: worktreePath }), "read worktree status").stdout;
   }
 
-  async remove(repoRoot: string, worktreePath: string): Promise<void> {
-    requireSuccess(await this.run("git", ["worktree", "remove", worktreePath], { cwd: repoRoot }), "remove worktree");
+  async merge(repoRoot: string, branch: string): Promise<void> {
+    if (!branch.startsWith("agent/")) throw new Error(`Invalid agent branch: ${branch}`);
+    requireSuccess(await this.run("git", ["merge", "--no-edit", branch], { cwd: repoRoot }), `merge ${branch}`);
+  }
+
+  async remove(repoRoot: string, worktreePath: string, force = false): Promise<void> {
+    requireSuccess(await this.run("git", ["worktree", "remove", ...(force ? ["--force"] : []), worktreePath], { cwd: repoRoot }), "remove worktree");
+  }
+
+  async deleteBranch(repoRoot: string, branch: string, force = false): Promise<void> {
+    if (!branch.startsWith("agent/")) throw new Error(`Invalid agent branch: ${branch}`);
+    requireSuccess(await this.run("git", ["branch", force ? "-D" : "-d", branch], { cwd: repoRoot }), `delete ${branch}`);
   }
 }

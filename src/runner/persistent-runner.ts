@@ -52,6 +52,8 @@ export class PersistentAgentRunner {
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 },
       lastSequence: 0,
       tmuxTarget: job.tmuxTarget,
+      ...(job.worktree ? { worktree: job.worktree } : {}),
+      ...(job.branch ? { branch: job.branch } : {}),
       ...(job.model ? { model: job.model } : {}),
     };
   }
@@ -171,10 +173,12 @@ export class PersistentAgentRunner {
         await this.markProgress();
         await this.setStatus("running", "Agent processing");
         return;
-      case "agent_settled":
+      case "agent_settled": {
         await this.markProgress();
+        this.snapshot = { ...this.snapshot, lastCompletedAt: this.now().toISOString() };
         await this.setStatus("idle", "Waiting for instructions");
         return;
+      }
       case "message_update": {
         const update = event.assistantMessageEvent as { type?: string; delta?: string } | undefined;
         if (update?.type === "text_delta" && update.delta) {
