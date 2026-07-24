@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.3 — 2026-07-24
+
+### Fixed
+
+- Serialize admission queue mutations so parallel agent spawns cannot lose queued work or corrupt `queue.json`
+- Use collision-proof temporary filenames and clean up failed atomic writes
+
 ## 0.2.2 — 2026-07-24
 
 ### Fixed
