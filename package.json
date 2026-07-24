@@ -1,0 +1,54 @@
+{
+  "name": "pi-tmux-agents",
+  "version": "0.1.0",
+  "description": "Persistent tmux-backed subagents with orchestration, watchdogs, worktrees, and a polished TUI for pi",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "agents",
+    "subagents",
+    "tmux",
+    "tui"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noickare/pi-tmux-agents.git"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "docs"
+  ],
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest --run",
+    "test:watch": "vitest",
+    "tui:fixtures": "tsx scripts/render-fixtures.ts",
+    "validate": "npm run check && npm test"
+  },
+  "pi": {
+    "extensions": [
+      "./src/extension/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^0.81.1",
+    "@earendil-works/pi-coding-agent": "^0.81.1",
+    "@earendil-works/pi-tui": "^0.81.1",
+    "@types/node": "^24.12.4",
+    "tsx": "^4.23.1",
+    "typebox": "^1.1.38",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
+  }
+}

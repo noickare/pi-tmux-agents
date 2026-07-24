@@ -1,0 +1,38 @@
+import { cpus, freemem, loadavg, totalmem } from "node:os";
+import type { CommandRunner } from "./command-runner.js";
+import type { ResourceSnapshot } from "./scheduler.js";
+
+export interface ResourceProbeOptions {
+  parentReservedCpu?: number;
+  parentReservedMemoryBytes?: number;
+  activeWeight?: number;
+  providerBackoff?: boolean;
+}
+
+export class ResourceProbe {
+  constructor(private readonly run: CommandRunner) {}
+
+  async snapshot(path: string, options: ResourceProbeOptions = {}): Promise<ResourceSnapshot> {
+    return {
+      cpuCount: cpus().length,
+      loadAverage1m: loadavg()[0] ?? 0,
+      totalMemoryBytes: totalmem(),
+      availableMemoryBytes: freemem(),
+      availableDiskBytes: await this.availableDisk(path),
+      activeWeight: options.activeWeight ?? 0,
+      parentReservedCpu: options.parentReservedCpu ?? 1,
+      parentReservedMemoryBytes: options.parentReservedMemoryBytes ?? 1024 ** 3,
+      providerBackoff: options.providerBackoff ?? false,
+    };
+  }
+
+  private async availableDisk(path: string): Promise<number> {
+    const result = await this.run("df", ["-Pk", path]);
+    if (result.code !== 0) throw new Error(`disk probe failed: ${result.stderr.trim() || result.code}`);
+    const rows = result.stdout.trim().split("\n");
+    const values = rows.at(-1)?.trim().split(/\s+/);
+    const availableKilobytes = Number(values?.[3]);
+    if (!Number.isFinite(availableKilobytes)) throw new Error(`unexpected df output for ${path}`);
+    return availableKilobytes * 1024;
+  }
+}
