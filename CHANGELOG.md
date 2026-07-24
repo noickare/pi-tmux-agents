@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 — 2026-07-24
+
+### Fixed
+
+- Use a full-width, zero-margin focused dashboard below 60 columns so underlying terminal text cannot remain visible beside the overlay
+
 ## 0.2.1 — 2026-07-24
 
 ### Fixed
