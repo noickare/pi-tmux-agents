@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 2 as const;
 
 export type AgentStatus =
   | "creating"
@@ -6,13 +6,13 @@ export type AgentStatus =
   | "starting"
   | "idle"
   | "running"
+  | "awaiting_review"
   | "waiting"
   | "retrying"
   | "compacting"
   | "paused"
   | "blocked"
   | "aborting"
-  | "completed"
   | "failed"
   | "replaced"
   | "closed"
@@ -20,6 +20,34 @@ export type AgentStatus =
 
 export type AgentPriority = "interactive" | "merge-critical" | "normal" | "speculative";
 export type AgentWeight = "light" | "normal" | "heavy";
+export type AgentReviewState = "pending" | "revision_requested" | "accepted" | "taken_over" | "escalated" | "dismissed";
+
+export interface AgentResultSummary {
+  resultId: string;
+  outcome: "completed" | "interrupted" | "failed";
+  assignmentId: string;
+  attemptId: string;
+  attemptNumber: number;
+  completedAt: string;
+  finalResponse: string;
+  stopReason?: string;
+  error?: string;
+  resultPath: string;
+}
+
+export interface AgentTaskResult extends AgentResultSummary {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  agentId: string;
+  task: string;
+  startedAt: string;
+  usage: AgentUsage;
+  workspace: {
+    cwd: string;
+    worktree?: string;
+    branch?: string;
+    baseCommit?: string;
+  };
+}
 
 export interface AgentActivity {
   at: string;
@@ -41,6 +69,11 @@ export type AgentCommandType =
   | "resume"
   | "abort"
   | "restart"
+  | "revise"
+  | "accept"
+  | "take_over"
+  | "escalate"
+  | "dismiss"
   | "set_priority"
   | "replace"
   | "close";
@@ -66,6 +99,8 @@ export type AgentEventType =
   | "usage_changed"
   | "diagnostic"
   | "command_acknowledged"
+  | "result_ready"
+  | "review_decision"
   | "runner_stopped";
 
 export interface AgentEvent {
@@ -115,6 +150,11 @@ export interface AgentSnapshot {
   lastHeartbeatAt: string;
   lastProgressAt: string;
   lastCompletedAt?: string;
+  assignmentId?: string;
+  attemptId?: string;
+  attemptNumber?: number;
+  latestResult?: AgentResultSummary;
+  reviewState?: AgentReviewState;
   nextParentReviewAt?: string;
   queuedMessages: number;
   recentActivity?: readonly AgentActivity[];
@@ -148,5 +188,5 @@ export function isAgentCommand(value: unknown): value is AgentCommand {
 }
 
 const COMMAND_TYPES = new Set<AgentCommandType>([
-  "prompt", "steer", "follow_up", "pause", "resume", "abort", "restart", "set_priority", "replace", "close",
+  "prompt", "steer", "follow_up", "pause", "resume", "abort", "restart", "revise", "accept", "take_over", "escalate", "dismiss", "set_priority", "replace", "close",
 ]);

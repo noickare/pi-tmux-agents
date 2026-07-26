@@ -1,7 +1,8 @@
-import { appendFile, chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { appendFile, chmod, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { AgentCommand, AgentEvent, AgentSnapshot } from "./protocol.js";
-import { isAgentCommand } from "./protocol.js";
+import type { AgentCommand, AgentEvent, AgentSnapshot, AgentTaskResult } from "./protocol.js";
+import { isAgentCommand, PROTOCOL_VERSION } from "./protocol.js";
 
 export interface JsonlReadResult<T> {
   records: T[];
@@ -9,11 +10,16 @@ export interface JsonlReadResult<T> {
 }
 
 export class AgentStateStore {
+  private snapshotWrites = Promise.resolve();
+
   constructor(readonly directory: string) {}
 
   get commandsPath(): string { return join(this.directory, "commands.jsonl"); }
   get eventsPath(): string { return join(this.directory, "events.jsonl"); }
   get snapshotPath(): string { return join(this.directory, "snapshot.json"); }
+  resultPath(assignmentId: string, attemptId: string): string {
+    return join(this.directory, "assignments", safeSegment(assignmentId), "attempts", safeSegment(attemptId), "result.json");
+  }
 
   async initialize(): Promise<void> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
@@ -30,19 +36,81 @@ export class AgentStateStore {
   }
 
   async writeSnapshot(snapshot: AgentSnapshot): Promise<void> {
-    await this.initialize();
-    const temporary = `${this.snapshotPath}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(snapshot, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-    await rename(temporary, this.snapshotPath);
+    const candidate = structuredClone(snapshot);
+    const write = this.snapshotWrites.then(async () => {
+      const current = await this.readSnapshot();
+      if (current && current.lastSequence > candidate.lastSequence) return;
+      await this.initialize();
+      const temporary = `${this.snapshotPath}.${process.pid}.${randomUUID()}.tmp`;
+      try {
+        await writeFile(temporary, `${JSON.stringify(candidate, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+        await rename(temporary, this.snapshotPath);
+      } catch (error) {
+        await rm(temporary, { force: true }).catch(() => undefined);
+        throw error;
+      }
+    });
+    this.snapshotWrites = write.catch(() => undefined);
+    return write;
   }
 
   async readSnapshot(): Promise<AgentSnapshot | undefined> {
     try {
-      return JSON.parse(await readFile(this.snapshotPath, "utf8")) as AgentSnapshot;
+      const value = JSON.parse(await readFile(this.snapshotPath, "utf8")) as Partial<AgentSnapshot>;
+      return value.protocolVersion === PROTOCOL_VERSION ? value as AgentSnapshot : undefined;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
     }
+  }
+
+  async writeResult(result: AgentTaskResult): Promise<string> {
+    const path = this.resultPath(result.assignmentId, result.attemptId);
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, `${JSON.stringify(result, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+      await rename(temporary, path);
+    } catch (error) {
+      await rm(temporary, { force: true }).catch(() => undefined);
+      throw error;
+    }
+    return path;
+  }
+
+  async readResult(assignmentId: string, attemptId: string): Promise<AgentTaskResult | undefined> {
+    try {
+      const value = JSON.parse(await readFile(this.resultPath(assignmentId, attemptId), "utf8")) as Partial<AgentTaskResult>;
+      return value.protocolVersion === PROTOCOL_VERSION ? value as AgentTaskResult : undefined;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+  }
+
+  async readLatestResult(): Promise<AgentTaskResult | undefined> {
+    const root = join(this.directory, "assignments");
+    let assignments;
+    try { assignments = await readdir(root, { withFileTypes: true }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+    const results: AgentTaskResult[] = [];
+    for (const assignment of assignments) {
+      if (!assignment.isDirectory()) continue;
+      const attemptsRoot = join(root, assignment.name, "attempts");
+      let attempts;
+      try { attempts = await readdir(attemptsRoot, { withFileTypes: true }); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+      for (const attempt of attempts) {
+        if (!attempt.isDirectory()) continue;
+        try {
+          const value = JSON.parse(await readFile(join(attemptsRoot, attempt.name, "result.json"), "utf8")) as Partial<AgentTaskResult>;
+          if (value.protocolVersion === PROTOCOL_VERSION) results.push(value as AgentTaskResult);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
+    }
+    return results.sort((left, right) => right.completedAt.localeCompare(left.completedAt))[0];
   }
 
   async readCommands(): Promise<JsonlReadResult<AgentCommand>> {
@@ -91,9 +159,14 @@ export async function readJsonl<T>(path: string, validate: (value: unknown) => v
   return { records, ignoredTrailingFragment: false };
 }
 
+function safeSegment(value: string): string {
+  if (!/^[A-Za-z0-9._-]+$/.test(value) || value === "." || value === "..") throw new Error("Result identifiers must be safe path segments");
+  return value;
+}
+
 function isAgentEvent(value: unknown): value is AgentEvent {
   if (!value || typeof value !== "object") return false;
   const item = value as Partial<AgentEvent>;
-  return item.protocolVersion === 1 && typeof item.id === "string" && typeof item.agentId === "string" &&
+  return item.protocolVersion === PROTOCOL_VERSION && typeof item.id === "string" && typeof item.agentId === "string" &&
     typeof item.sequence === "number" && typeof item.type === "string" && typeof item.createdAt === "string";
 }

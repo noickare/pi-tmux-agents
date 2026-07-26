@@ -1,20 +1,20 @@
 import type { AgentStatus } from "./protocol.js";
 
-const TERMINAL = new Set<AgentStatus>(["completed", "failed", "replaced", "closed", "orphaned"]);
+const TERMINAL = new Set<AgentStatus>(["failed", "replaced", "closed", "orphaned"]);
 
 const TRANSITIONS: Readonly<Record<AgentStatus, ReadonlySet<AgentStatus>>> = {
   creating: new Set(["queued", "starting", "failed", "closed", "replaced"]),
   queued: new Set(["starting", "closed", "failed", "replaced"]),
-  starting: new Set(["idle", "running", "failed", "orphaned", "closed", "replaced"]),
+  starting: new Set(["idle", "running", "awaiting_review", "failed", "orphaned", "closed", "replaced"]),
   idle: new Set(["starting", "running", "paused", "closed", "orphaned", "failed", "replaced"]),
-  running: new Set(["starting", "idle", "waiting", "retrying", "compacting", "paused", "blocked", "aborting", "completed", "failed", "closed", "orphaned", "replaced"]),
+  running: new Set(["starting", "idle", "awaiting_review", "waiting", "retrying", "compacting", "paused", "blocked", "aborting", "failed", "closed", "orphaned", "replaced"]),
+  awaiting_review: new Set(["starting", "running", "paused", "closed", "orphaned", "failed", "replaced"]),
   waiting: new Set(["starting", "running", "idle", "paused", "blocked", "aborting", "failed", "closed", "orphaned", "replaced"]),
   retrying: new Set(["starting", "running", "paused", "blocked", "aborting", "failed", "closed", "orphaned", "replaced"]),
   compacting: new Set(["starting", "running", "paused", "aborting", "failed", "closed", "orphaned", "replaced"]),
-  paused: new Set(["starting", "queued", "idle", "running", "aborting", "closed", "orphaned", "failed", "replaced"]),
+  paused: new Set(["starting", "queued", "idle", "running", "awaiting_review", "aborting", "closed", "orphaned", "failed", "replaced"]),
   blocked: new Set(["starting", "running", "paused", "aborting", "failed", "replaced", "closed"]),
-  aborting: new Set(["idle", "failed", "closed", "orphaned", "replaced"]),
-  completed: new Set(["idle", "closed", "replaced"]),
+  aborting: new Set(["idle", "awaiting_review", "failed", "closed", "orphaned", "replaced"]),
   failed: new Set(["queued", "starting", "replaced", "closed"]),
   replaced: new Set(["closed"]),
   closed: new Set(),

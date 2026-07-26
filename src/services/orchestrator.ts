@@ -119,6 +119,7 @@ export class AgentOrchestrator {
     payload: Readonly<Record<string, unknown>> = {},
   ): Promise<string> {
     const snapshot = this.requireAgent(agentId);
+    assertCommandAllowed(snapshot, type);
     const effectiveType = snapshot.status === "idle" && (type === "steer" || type === "follow_up") ? "prompt" : type;
     const id = randomUUID();
     const commandPayload = { ...payload, ...(message === undefined ? {} : { message }) };
@@ -196,6 +197,15 @@ export class AgentOrchestrator {
       ...(job.baseCommit ? { baseCommit: job.baseCommit } : {}),
       ...(job.systemPrompt ? { systemPrompt: job.systemPrompt } : {}),
     });
+  }
+
+  async result(agentId: string) {
+    const snapshot = this.requireAgent(agentId);
+    if (!snapshot.latestResult) throw new Error(`Agent ${snapshot.agentId} has no completed result`);
+    const result = await new AgentStateStore(getAgentStateDir(this.parentSessionId, snapshot.agentId, this.agentDir))
+      .readResult(snapshot.latestResult.assignmentId, snapshot.latestResult.attemptId);
+    if (!result) throw new Error(`Result ${snapshot.latestResult.resultId} is missing`);
+    return result;
   }
 
   async diff(agentId: string): Promise<string> {
@@ -429,6 +439,16 @@ export class AgentOrchestrator {
     if (matches.length > 1) throw new Error(`Ambiguous agent: ${agentId}`);
     throw new Error(`Unknown agent: ${agentId}`);
   }
+}
+
+function assertCommandAllowed(snapshot: AgentSnapshot, type: AgentCommandType): void {
+  const reviewCommands = new Set<AgentCommandType>(["revise", "accept", "take_over", "escalate", "dismiss"]);
+  if (snapshot.status === "awaiting_review") {
+    if (["prompt", "steer", "follow_up", "close"].includes(type)) throw new Error(`Agent ${snapshot.agentId} awaits parent review; use revise, accept, take_over, escalate, or dismiss`);
+  } else if (reviewCommands.has(type)) {
+    throw new Error(`${type} requires an awaiting_review agent`);
+  }
+  if (type === "prompt" && snapshot.status !== "idle") throw new Error(`prompt requires an idle agent; ${snapshot.agentId} is ${snapshot.status}`);
 }
 
 function normalizeInput(input: SpawnAgentInput): SpawnAgentInput {

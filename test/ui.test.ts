@@ -8,7 +8,7 @@ import { plainTheme, snapshot } from "./fixtures.js";
 const now = new Date("2026-07-23T10:02:00.000Z");
 const agents = [
   snapshot(),
-  snapshot({ agentId: "scout-1", name: "scout-1", status: "completed", currentTool: undefined, task: "Inspect authentication" }),
+  snapshot({ agentId: "scout-1", name: "scout-1", status: "awaiting_review", reviewState: "pending", currentTool: undefined, task: "Inspect authentication" }),
   snapshot({ agentId: "reviewer-1", name: "reviewer-1", status: "blocked", statusReason: "Waiting for worker", currentTool: undefined }),
 ];
 
@@ -50,10 +50,19 @@ describe("TUI foundations", () => {
     expect(actions).toEqual(["follow-up", "pause", "recover", "close-agent"]);
   });
 
+  it("distinguishes a result awaiting parent review from an unused idle session", () => {
+    const awaitingReview = snapshot({
+      status: "awaiting_review", currentTool: undefined, statusReason: "Result awaiting parent review",
+      lastCompletedAt: "2026-07-23T10:01:30.000Z", reviewState: "pending",
+    });
+    const [row] = createDashboardViewModel([awaitingReview], now).rows;
+    expect(row).toMatchObject({ icon: "◆", statusLabel: "Awaiting parent review", completedAssignment: true });
+  });
+
   it("renders explicit review timing and attention state", () => {
     const viewModel = createDashboardViewModel(agents, now, new Date("2026-07-23T10:01:48.000Z"));
     const text = new ProgressWidget(viewModel, plainTheme).render(120).join("\n");
-    expect(text).toContain("need attention");
+    expect(text).toContain("pending review/attention");
     expect(text).toContain("Parent review in 03:00");
     expect(text).toContain("watchdog checked 00:12 ago");
   });

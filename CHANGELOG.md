@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.0 — 2026-07-26
+
+### Added
+
+- Persist versioned assignment-attempt results with final assistant output, usage, workspace metadata, and durable result paths
+- Deliver settled child results directly to the parent agent for mandatory review
+- Add explicit `result`, `revise`, `accept`, `take_over`, `escalate`, and `dismiss` orchestration actions
+- Add the non-terminal `awaiting_review` lifecycle state and durable parent review decisions
+
+### Changed
+
+- Start protocol v2 as a clean state-model break; incompatible v1 snapshots are ignored rather than migrated
+- Keep settled child sessions parked for parent review instead of returning them to ambiguous idle state
+- Exclude review-parked children from progress-stall supervision and periodic execution reviews
+
+### Fixed
+
+- Coalesce parent supervision wakeups until the parent is idle, drop stale terminal-agent findings, and suppress unchanged watchdog alerts
+- Keep manual watchdog checks from recursively scheduling another parent review turn
+- Reject failed Pi RPC commands instead of acknowledging them as successful and leaving assignments idle
+
 ## 0.2.3 — 2026-07-24
 
 ### Fixed

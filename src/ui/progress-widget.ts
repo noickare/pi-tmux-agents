@@ -15,12 +15,12 @@ export class ProgressWidget implements Component {
     const { counts } = this.viewModel;
     const summary = width < 60
       ? `Agents ${counts.running} run · ${counts.queued} queue · ${counts.idle} idle${counts.attention > 0 ? ` · !${counts.attention}` : ""}`
-      : `Agents  ${counts.running} running · ${counts.queued} queued · ${counts.idle} idle${counts.attention > 0 ? ` · ${counts.attention} need attention` : ""}`;
+      : `Agents  ${counts.running} running · ${counts.queued} queued · ${counts.idle} idle${counts.attention > 0 ? ` · ${counts.attention} pending review/attention` : ""}`;
     const lines = [this.theme.fg(counts.attention > 0 ? "warning" : "accent", summary)];
 
     for (const row of this.viewModel.rows.slice(0, 3)) {
       const color = row.status === "failed" || row.status === "orphaned" ? "error"
-        : row.status === "completed" ? "success"
+        : row.completedAssignment ? "accent"
         : row.status === "blocked" || row.status === "paused" ? "warning" : "text";
       lines.push(`${this.theme.fg(color, `${row.icon} ${row.name}`)}  ${this.theme.fg("dim", row.currentActivity)}  ${this.theme.fg("muted", row.elapsed)}`);
     }

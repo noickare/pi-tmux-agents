@@ -28,6 +28,7 @@ export interface AgentRowViewModel {
   pendingUiRequest?: string;
   replaces?: string;
   replacedBy?: string;
+  completedAssignment: boolean;
 }
 
 export interface DashboardViewModel {
@@ -54,13 +55,13 @@ const STATUS_PRESENTATION: Readonly<Record<AgentStatus, { icon: string; label: s
   starting: { icon: "↗", label: "Starting" },
   idle: { icon: "○", label: "Idle" },
   running: { icon: "⠋", label: "Running" },
+  awaiting_review: { icon: "◆", label: "Awaiting parent review" },
   waiting: { icon: "…", label: "Waiting" },
   retrying: { icon: "↻", label: "Retrying" },
   compacting: { icon: "◇", label: "Compacting" },
   paused: { icon: "Ⅱ", label: "Paused" },
   blocked: { icon: "!", label: "Blocked" },
   aborting: { icon: "×", label: "Aborting" },
-  completed: { icon: "✓", label: "Completed" },
   failed: { icon: "✗", label: "Failed" },
   replaced: { icon: "↪", label: "Replaced" },
   closed: { icon: "—", label: "Closed" },
@@ -75,6 +76,7 @@ export function createDashboardViewModel(
   supplement: DashboardSupplement = {},
 ): DashboardViewModel {
   const rows = snapshots.map((snapshot) => {
+    const completedAssignment = snapshot.status === "awaiting_review";
     const basePresentation = STATUS_PRESENTATION[snapshot.status];
     const presentation = snapshot.status === "running" && supplement.config?.animationEnabled === false
       ? { ...basePresentation, icon: "▶" }
@@ -95,6 +97,7 @@ export function createDashboardViewModel(
       weight: snapshot.weight ?? (snapshot.worktree ? "heavy" : "light"),
       usage: snapshot.usage,
       activity: snapshot.recentActivity ?? [],
+      completedAssignment,
       ...(snapshot.worktree === undefined ? {} : { worktree: snapshot.worktree }),
       ...(snapshot.branch === undefined ? {} : { branch: snapshot.branch }),
       ...(snapshot.baseCommit === undefined ? {} : { baseCommit: snapshot.baseCommit }),
@@ -122,7 +125,7 @@ export function createDashboardViewModel(
       running: snapshots.filter((item) => ["running", "waiting", "retrying", "compacting"].includes(item.status)).length,
       queued: snapshots.filter((item) => item.status === "queued").length,
       idle: snapshots.filter((item) => item.status === "idle").length,
-      attention: snapshots.filter((item) => ["blocked", "failed", "orphaned"].includes(item.status)).length,
+      attention: snapshots.filter((item) => ["awaiting_review", "blocked", "failed", "orphaned"].includes(item.status)).length,
     },
     watchdogText: lastWatchdogAt ? `checked ${formatDuration(now.getTime() - lastWatchdogAt.getTime())} ago` : "not checked",
     nextWatchdogText: nextWatchdog === undefined ? "not scheduled" : countdown(nextWatchdog, now.getTime()),

@@ -2,7 +2,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { AgentDashboard } from "../src/ui/dashboard.js";
 import { ProgressWidget } from "../src/ui/progress-widget.js";
 import { createDashboardViewModel } from "../src/ui/view-model.js";
-import type { AgentSnapshot } from "../src/core/protocol.js";
+import { PROTOCOL_VERSION, type AgentSnapshot } from "../src/core/protocol.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 
 const theme = {
@@ -12,7 +12,7 @@ const theme = {
 } as unknown as Theme;
 
 const base: AgentSnapshot = {
-  protocolVersion: 1,
+  protocolVersion: PROTOCOL_VERSION,
   agentId: "worker-2",
   name: "worker-2",
   status: "running",
@@ -32,7 +32,7 @@ const base: AgentSnapshot = {
 };
 const agents: AgentSnapshot[] = [
   base,
-  { ...base, agentId: "scout-1", name: "scout-1", status: "completed", task: "Inspect auth", currentTool: "3 findings", queuedMessages: 0 },
+  { ...base, agentId: "scout-1", name: "scout-1", status: "awaiting_review", task: "Inspect auth", currentTool: "3 findings", queuedMessages: 0, reviewState: "pending" },
   { ...base, agentId: "reviewer-3", name: "reviewer-3", status: "blocked", statusReason: "Waiting for worker", currentTool: "Waiting for worker", queuedMessages: 0 },
 ];
 const vm = createDashboardViewModel(agents, new Date("2026-07-23T10:02:00.000Z"), new Date("2026-07-23T10:01:48.000Z"), undefined, {

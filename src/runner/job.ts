@@ -1,10 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { assertSafeId } from "../core/paths.js";
-import type { AgentPriority, AgentWeight } from "../core/protocol.js";
+import { PROTOCOL_VERSION, type AgentPriority, type AgentWeight } from "../core/protocol.js";
 
 export interface AgentJob {
-  protocolVersion: 1;
+  protocolVersion: typeof PROTOCOL_VERSION;
   parentSessionId: string;
   agentId: string;
   name: string;
@@ -47,7 +47,7 @@ export function isAgentJob(value: unknown): value is AgentJob {
   } catch {
     return false;
   }
-  return job.protocolVersion === 1 && typeof job.parentSessionId === "string" &&
+  return job.protocolVersion === PROTOCOL_VERSION && typeof job.parentSessionId === "string" &&
     typeof job.agentId === "string" && typeof job.name === "string" && job.name.length > 0 &&
     typeof job.cwd === "string" && typeof job.stateDirectory === "string" && typeof job.sessionId === "string" &&
     typeof job.tmuxTarget === "string" && job.tmuxTarget.length > 0 && typeof job.approveProject === "boolean";

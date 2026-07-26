@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { PROTOCOL_VERSION } from "../src/core/protocol.js";
 import type { AgentJob } from "../src/runner/job.js";
 import { buildPiRpcOptions } from "../src/runner/pi-invocation.js";
 
@@ -13,7 +14,7 @@ describe("pi RPC invocation", () => {
     const directory = await mkdtemp(join(tmpdir(), "pi-invocation-"));
     directories.push(directory);
     const job: AgentJob = {
-      protocolVersion: 1, parentSessionId: "parent", agentId: "worker", name: "Worker", cwd: "/repo",
+      protocolVersion: PROTOCOL_VERSION, parentSessionId: "parent", agentId: "worker", name: "Worker", cwd: "/repo",
       stateDirectory: directory, sessionId: "session-id", tmuxTarget: "pi-agents-parent:worker", approveProject: true,
       model: "provider/model", tools: ["read", "edit"], systemPrompt: "Work carefully.",
     };

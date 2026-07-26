@@ -93,7 +93,8 @@ Each tmux window runs a bundled TypeScript runner that:
 ├── commands.jsonl
 ├── events.jsonl
 ├── snapshot.json
-├── result.json
+├── assignments/
+│   └── <assignment-id>/attempts/<attempt-id>/result.json
 ├── runner.log
 └── transcript.log
 ```
@@ -108,27 +109,36 @@ Each tmux window runs a bundled TypeScript runner that:
 ## Agent Lifecycle
 
 ```text
-creating → queued → starting → idle ↔ running
-                                 ├── waiting
-                                 ├── retrying
-                                 ├── compacting
-                                 ├── paused
-                                 ├── blocked
-                                 └── aborting
+creating → queued → starting → idle → running
+                                  ├── waiting
+                                  ├── retrying
+                                  ├── compacting
+                                  ├── paused
+                                  ├── blocked
+                                  └── aborting
+                                       ↓
+                              awaiting_review
+                               ├── revise → running
+                               ├── escalate → awaiting_review
+                               ├── accept → closed
+                               ├── take_over → closed
+                               └── dismiss → closed
 
-Terminal:
-completed | failed | replaced | closed | orphaned
+Terminal session states:
+failed | replaced | closed | orphaned
 ```
 
-A persistent agent returns to `idle` after completing an assignment. It remains available for more instructions until explicitly closed or its configurable idle timeout expires.
+Settling persists a versioned result before moving the child to `awaiting_review`. The result is delivered directly to the parent agent, which must inspect the result and authoritative workspace and record an explicit decision. The human is involved only when the parent escalates or the user intervenes.
 
 ### Message routing
 
-- Idle agent and instruction → RPC `prompt`
+- Idle agent and instruction → new assignment via RPC `prompt`
 - Running agent and immediate correction → RPC `steer`
 - Running agent and later task → RPC `follow_up`
+- Awaiting-review agent and corrections → `revise`, preserving assignment and workspace while creating a new attempt
+- Awaiting-review agent and ordinary prompt/steer/follow-up → rejected so review cannot be bypassed
 - Paused agent → durable queue until resumed
-- Disconnected runner → retain command until recovery
+- Disconnected runner → preserve or create an interrupted result for parent review
 - Duplicate command ID → ignore safely
 
 ## Parent Orchestration
@@ -138,8 +148,9 @@ The parent agent can:
 - Create predefined or ad-hoc children
 - Assign and reprioritize tasks
 - Inspect status, transcript, session, diff, and commits
-- Send multiple steering or follow-up messages
-- Pause, resume, abort, restart, replace, or close agents
+- Send multiple steering or follow-up messages during active execution
+- Pause, resume, abort, restart, or replace agents
+- Retrieve durable results and explicitly accept, revise, take over, dismiss, or escalate them
 - Request fixes or delegate reviews
 - Perform fixes itself
 - Run validation
@@ -196,7 +207,7 @@ Runs every 15–30 seconds without invoking a model and checks:
 
 Default: every five minutes while children are active. The TUI shows the next review time and whether it is overdue.
 
-The extension sends a compact consolidated report to the parent. The parent can inspect, steer, restart, replace, take over, merge, or close children.
+The extension sends compact consolidated execution reports to the parent. Settled results use a separate event-driven handoff and are excluded from periodic execution reviews. The parent can inspect, steer, restart, replace, take over, merge, or close children as appropriate.
 
 Potentially stuck agents receive:
 

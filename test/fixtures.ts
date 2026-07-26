@@ -1,5 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import type { AgentSnapshot, AgentStatus } from "../src/core/protocol.js";
+import { PROTOCOL_VERSION, type AgentSnapshot, type AgentStatus } from "../src/core/protocol.js";
 
 export const plainTheme = {
   fg: (_color: string, text: string) => text,
@@ -13,7 +13,7 @@ type SnapshotOverrides = Omit<Partial<AgentSnapshot>, "currentTool"> & { current
 
 export function snapshot(overrides: SnapshotOverrides = {}): AgentSnapshot {
   const result = {
-    protocolVersion: 1,
+    protocolVersion: PROTOCOL_VERSION,
     agentId: "worker-1",
     name: "worker-1",
     status: "running" as AgentStatus,

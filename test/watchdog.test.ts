@@ -14,6 +14,26 @@ const dirs: string[] = [];
 afterEach(async () => Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))));
 
 describe("AgentWatchdog", () => {
+  it("does not classify an awaiting-review child as stalled", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-watchdog-review-"));
+    dirs.push(root);
+    const child = join(root, "worker-1");
+    await mkdir(child);
+    await new AgentStateStore(child).writeSnapshot(snapshot({
+      status: "awaiting_review",
+      currentTool: undefined,
+      reviewState: "pending",
+      lastHeartbeatAt: "2026-07-23T10:00:00.000Z",
+      lastProgressAt: "2026-07-23T09:00:00.000Z",
+    }));
+    const run = vi.fn<CommandRunner>().mockResolvedValue({ stdout: "", stderr: "", code: 0 });
+    const monitor = new SnapshotMonitor(root, new AgentRegistry());
+    const findings = await new AgentWatchdog(monitor, new TmuxService(run), {
+      now: () => new Date("2026-07-23T10:00:01.000Z"),
+    }).check();
+    expect(findings).toEqual([]);
+  });
+
   it("reports stale heartbeat, progress, and missing tmux", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-watchdog-"));
     dirs.push(root);

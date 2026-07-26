@@ -36,6 +36,20 @@ describe("AgentOrchestrator", () => {
     expect(routed).toContain("Run another inspection");
   });
 
+  it("requires an explicit review decision before continuing settled work", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-orchestrator-review-"));
+    dirs.push(agentDir);
+    const run = vi.fn<CommandRunner>().mockResolvedValue({ stdout: "", stderr: "", code: 0 });
+    const registry = new AgentRegistry();
+    registry.upsert(snapshot({ agentId: "review-1", status: "awaiting_review", reviewState: "pending", currentTool: undefined }));
+    const orchestrator = new AgentOrchestrator("parent-review", agentDir, registry, new RunnerLauncher(new TmuxService(run)), new WorktreeService(run));
+    await expect(orchestrator.command("review-1", "prompt", "Bypass it")).rejects.toThrow("awaits parent review");
+    await expect(orchestrator.command("review-1", "follow_up", "Bypass it")).rejects.toThrow("awaits parent review");
+    await expect(orchestrator.command("review-1", "revise", "Correct the test")).resolves.toEqual(expect.any(String));
+    const commands = await readFile(join(getAgentStateDir("parent-review", "review-1", agentDir), "commands.jsonl"), "utf8");
+    expect(commands).toContain('"type":"revise"');
+  });
+
   it("replaces an orphaned agent while preserving its worktree and branch", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-orchestrator-replace-"));
     dirs.push(agentDir);

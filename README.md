@@ -2,19 +2,22 @@
 
 Persistent, steerable, tmux-backed subagents for [pi](https://github.com/earendil-works/pi-mono), with isolated Git worktrees, autonomous parent orchestration, resource-aware scheduling, watchdog supervision, and a responsive terminal UI.
 
-> **Status:** Public, production-oriented v0.2.3 release. See the [approved PRD](docs/PRD.md).
+> **Status:** Public, production-oriented v0.3.0 release. See the [approved PRD](docs/PRD.md).
 
 ## Features
 
 - Persistent pi RPC sessions in readable tmux windows
-- Repeated prompts, immediate steering, and queued follow-ups
+- Durable assignment attempts and captured final child results
+- Automatic result delivery to the parent agent for mandatory autonomous review
+- Explicit revision, acceptance, takeover, dismissal, and human-escalation decisions
+- Immediate steering and queued follow-ups while work is active
 - Dedicated Git worktrees and branches for mutating agents
 - Priority- and resource-aware durable admission queue without a fixed agent limit
 - Critical-pressure auto-pause and recovery with parent resource reservations
 - Heartbeat, process, progress, tmux, worktree, resource, queue, retry, tool-failure, and extension-UI supervision
 - Staged diagnostic steering, restart, and worktree-preserving replacement
-- Five-minute parent reviews and configurable idle expiry
-- Automatic parent wakeups for completion and attention states
+- Five-minute supervision of active execution and configurable ready-session expiry
+- Coalesced parent wakeups for results and current attention states
 - Restart-safe command acknowledgement, replay, locks, and snapshots
 - Responsive, keyboard-first pi dashboard and compact progress widget
 - User and trusted project Markdown agent definitions
@@ -64,10 +67,12 @@ Ask the parent naturally:
 Create a scout to inspect authentication and a worker to fix the failing tests.
 Steer the worker to focus on integration tests.
 Check whether any children are stuck.
-Validate and merge the worker's branch when ready.
+Review every returned result, request revisions when needed, and decide how accepted work enters the final deliverable.
 ```
 
-The parent uses the `tmux_agent` tool. Direct commands are also available:
+The parent uses the `tmux_agent` tool. A settled child enters `awaiting_review`; the parent must inspect its result and workspace, then call `accept`, `revise`, `take_over`, `dismiss`, or `escalate`. Human input is only required when the parent explicitly escalates.
+
+Direct commands are also available:
 
 ```text
 /agents                         Open the dashboard
@@ -151,7 +156,9 @@ Runtime state is stored under:
 ~/.pi/agent/subagents/<parent-session-id>/<agent-id>/
 ```
 
-Each child has an isolated pi session, command/event logs, an atomic snapshot, transcript, and runner lock. Tmux children continue when the parent reloads or restarts; the extension reconnects by scanning these snapshots.
+Each child has an isolated pi session, command/event logs, an atomic snapshot, transcript, runner lock, and versioned results under `assignments/<assignment-id>/attempts/<attempt-id>/result.json`. Tmux children continue when the parent reloads or restarts; the extension reconnects by scanning these snapshots and redelivers pending review results.
+
+Version 0.3.0 introduces protocol v2 as a clean break. Protocol-v1 runtime state is ignored rather than migrated; finish or archive old children before upgrading.
 
 ## Security
 

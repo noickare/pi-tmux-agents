@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createCommand, type AgentPriority, type AgentWeight } from "../core/protocol.js";
+import { createCommand, PROTOCOL_VERSION, type AgentPriority, type AgentWeight } from "../core/protocol.js";
 import { AgentStateStore } from "../core/state-store.js";
 import type { AgentJob } from "../runner/job.js";
 import { writeAgentJob } from "../runner/job.js";
@@ -43,7 +43,7 @@ export class RunnerLauncher {
     const session = `pi-agents-${input.parentSessionId}`;
     const target = this.tmux.target(session, input.agentId);
     const job: AgentJob = {
-      protocolVersion: 1,
+      protocolVersion: PROTOCOL_VERSION,
       parentSessionId: input.parentSessionId,
       agentId: input.agentId,
       name: input.name,

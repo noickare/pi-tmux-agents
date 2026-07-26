@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { assertTransition, canTransition, isTerminalStatus } from "../src/core/state-machine.js";
 
 describe("agent state machine", () => {
-  it("supports persistent completion returning to idle", () => {
-    expect(canTransition("running", "completed")).toBe(true);
-    expect(canTransition("completed", "idle")).toBe(true);
+  it("requires parent review after a child settles", () => {
+    expect(canTransition("running", "awaiting_review")).toBe(true);
+    expect(canTransition("awaiting_review", "running")).toBe(true);
+    expect(canTransition("awaiting_review", "closed")).toBe(true);
+    expect(canTransition("awaiting_review", "idle")).toBe(false);
   });
 
   it("rejects impossible transitions", () => {

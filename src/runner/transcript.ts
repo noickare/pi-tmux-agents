@@ -23,7 +23,7 @@ export function renderRpcEvent(event: RpcEvent, output: TranscriptWriter): void 
     return;
   }
   if (event.type === "compaction_start") output.write("\n◇ compacting context\n");
-  if (event.type === "agent_settled") output.write("\n✓ agent idle — waiting for instructions\n");
+  if (event.type === "agent_settled") output.write("\n◆ result ready — awaiting parent review\n");
   if (event.type === "transport_closed") output.write("\n✗ RPC transport closed\n");
 }
 

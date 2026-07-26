@@ -23,6 +23,23 @@ describe("AgentStateStore", () => {
     expect(await readFile(store.commandsPath, "utf8")).toMatch(/command-1/);
   });
 
+  it("serializes concurrent snapshots without regressing sequence state", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-tmux-agents-concurrent-"));
+    directories.push(directory);
+    const store = new AgentStateStore(directory);
+    await Promise.all(Array.from({ length: 50 }, (_, index) => store.writeSnapshot(snapshot({ lastSequence: index }))));
+    expect((await store.readSnapshot())?.lastSequence).toBe(49);
+  });
+
+  it("ignores incompatible snapshots instead of migrating legacy state", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-tmux-agents-incompatible-"));
+    directories.push(directory);
+    const store = new AgentStateStore(directory);
+    await store.initialize();
+    await writeFile(store.snapshotPath, `${JSON.stringify({ ...snapshot(), protocolVersion: 1 })}\n`, "utf8");
+    expect(await store.readSnapshot()).toBeUndefined();
+  });
+
   it("recovers from a partial trailing JSONL write", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pi-tmux-agents-"));
     directories.push(directory);
