@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +36,8 @@ export interface LaunchedAgent {
 }
 
 export class RunnerLauncher {
+  private readonly sessionLaunches = new Map<string, Promise<void>>();
+
   constructor(private readonly tmux: TmuxService) {}
 
   async launch(input: LaunchAgentInput): Promise<LaunchedAgent> {
@@ -77,9 +79,32 @@ export class RunnerLauncher {
     }
 
     const command = runnerCommand(jobPath);
-    if (await this.tmux.hasSession(session)) await this.tmux.createWindow(session, input.agentId, command, input.cwd);
-    else await this.tmux.createSession(session, input.agentId, command, input.cwd);
-    return { job, jobPath };
+    try {
+      await this.launchWindow(session, input.agentId, command, input.cwd);
+      return { job, jobPath };
+    } catch (error) {
+      await rm(input.stateDirectory, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async launchWindow(session: string, window: string, command: readonly string[], cwd: string): Promise<void> {
+    const previous = this.sessionLaunches.get(session) ?? Promise.resolve();
+    const launch = previous.catch(() => undefined).then(async () => {
+      if (await this.tmux.hasSession(session)) {
+        await this.tmux.createWindow(session, window, command, cwd);
+        return;
+      }
+      try {
+        await this.tmux.createSession(session, window, command, cwd);
+      } catch (error) {
+        if (!await this.tmux.hasSession(session)) throw error;
+        await this.tmux.createWindow(session, window, command, cwd);
+      }
+    });
+    this.sessionLaunches.set(session, launch);
+    try { await launch; }
+    finally { if (this.sessionLaunches.get(session) === launch) this.sessionLaunches.delete(session); }
   }
 }
 

@@ -194,7 +194,7 @@ describe("PersistentAgentRunner", () => {
     transport.nextError = "model unavailable";
     const runner = new PersistentAgentRunner(job, store, async () => transport, { heartbeatIntervalMs: 60_000, commandPollIntervalMs: 60_000, output: { write() {} } });
     await runner.start();
-    expect(runner.currentSnapshot).toMatchObject({ status: "idle" });
+    expect(runner.currentSnapshot).toMatchObject({ status: "failed", statusReason: "Prompt rejected: model unavailable" });
     expect(runner.currentSnapshot.assignmentId).toBeUndefined();
     expect((await store.readEvents()).records.at(-1)).toMatchObject({
       type: "command_acknowledged",

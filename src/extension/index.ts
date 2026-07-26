@@ -39,7 +39,7 @@ const ToolParameters = Type.Object({
   agent: Type.Optional(Type.String({ description: "Agent id, unique prefix, or exact name" })),
   task: Type.Optional(Type.String({ description: "Task or message for spawn/prompt/steer/follow_up" })),
   role: Type.Optional(Type.String({ description: "Predefined agent role; omit for an ad-hoc agent" })),
-  model: Type.Optional(Type.String()),
+  model: Type.Optional(Type.String({ description: "Model id; bare ids inherit the active parent provider, or use provider/model explicitly" })),
   tools: Type.Optional(Type.Array(Type.String())),
   mutating: Type.Optional(Type.Boolean({ default: true })),
   approveProject: Type.Optional(Type.Boolean({ default: false })),
@@ -109,12 +109,13 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
         const definition = role ? discovery.agents.find((agent) => agent.name === role) : undefined;
         if (role && !definition) throw new Error(`Unknown or untrusted agent role: ${role}`);
         if (definition?.source === "project" && !ctx.isProjectTrusted()) throw new Error("Project agent definitions require a trusted project");
+        const childModel = resolveChildModel(params.model ?? definition?.model, ctx.model);
         const launched = await manager.spawn({
           name: role ?? params.agent ?? "worker",
           task,
           cwd: ctx.cwd,
           ...(definition ? { definition } : {}),
-          ...(params.model ? { model: params.model } : {}),
+          ...(childModel ? { model: childModel } : {}),
           ...(params.tools ? { tools: params.tools } : {}),
           mutating: params.mutating ?? true,
           approveProject: params.approveProject === true && ctx.isProjectTrusted(),
@@ -647,6 +648,13 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
       return { render: () => [], invalidate() {} };
     });
   }
+}
+
+export function resolveChildModel(requested: string | undefined, active: { provider: string; id: string } | undefined): string | undefined {
+  if (!requested) return undefined;
+  if (requested.includes("/")) return requested;
+  if (!active?.provider) throw new Error(`Bare child model ${requested} requires an active parent provider; use provider/model`);
+  return `${active.provider}/${requested}`;
 }
 
 export function parseNewAgentTask(firstWord: string | undefined, remaining: readonly string[]): string {

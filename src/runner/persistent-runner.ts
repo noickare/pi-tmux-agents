@@ -223,7 +223,16 @@ export class PersistentAgentRunner {
       }
       await this.emitAcknowledgement(command, true);
     } catch (error) {
-      await this.emitAcknowledgement(command, false, (error as Error).message);
+      const message = (error as Error).message;
+      if (command.type === "prompt" && this.snapshot.status === "idle") {
+        await this.setStatus("failed", `Prompt rejected: ${message}`);
+      } else {
+        const reason = `${command.type} rejected: ${message}`;
+        this.snapshot = { ...this.snapshot, statusReason: reason };
+        this.recordActivity("diagnostic", reason);
+        await this.emit("diagnostic", { kind: "command_rejected", commandId: command.id, commandType: command.type, error: message });
+      }
+      await this.emitAcknowledgement(command, false, message);
     }
   }
 

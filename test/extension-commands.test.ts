@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { formatParentReview, parseNewAgentTask } from "../src/extension/index.js";
+import { formatParentReview, parseNewAgentTask, resolveChildModel } from "../src/extension/index.js";
 import { snapshot } from "./fixtures.js";
 
 describe("/agents command parsing", () => {
   it("preserves the first word of an inline new-agent task", () => {
     expect(parseNewAgentTask("Create", ["agent-output.txt", "now"])).toBe("Create agent-output.txt now");
     expect(parseNewAgentTask(undefined, [])).toBe("");
+  });
+
+  it("qualifies bare child models with the active parent provider", () => {
+    expect(resolveChildModel("gpt-5.4", { provider: "openai-codex", id: "gpt-5.4" })).toBe("openai-codex/gpt-5.4");
+    expect(resolveChildModel("anthropic/claude-sonnet-4-6", { provider: "openai-codex", id: "gpt-5.4" })).toBe("anthropic/claude-sonnet-4-6");
+    expect(resolveChildModel(undefined, undefined)).toBeUndefined();
+    expect(() => resolveChildModel("gpt-5.4", undefined)).toThrow("provider/model");
   });
 
   it("delivers a decision-ready result packet to the parent agent", () => {

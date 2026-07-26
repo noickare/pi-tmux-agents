@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1 — 2026-07-26
+
+### Fixed
+
+- Qualify bare child model IDs with the active parent provider so ambiguous IDs do not resolve to an unauthenticated provider
+- Surface rejected initial prompts as failed agents with the underlying RPC error instead of leaving zero-usage children apparently idle
+- Serialize concurrent first-child tmux launches and recover safely when another creator wins the shared-session race
+- Remove incomplete state directories when tmux launch fails
+
 ## 0.3.0 — 2026-07-26
 
 ### Added
