@@ -62,8 +62,9 @@ describe("TUI foundations", () => {
   it("renders explicit review timing and attention state", () => {
     const viewModel = createDashboardViewModel(agents, now, new Date("2026-07-23T10:01:48.000Z"));
     const text = new ProgressWidget(viewModel, plainTheme).render(120).join("\n");
-    expect(text).toContain("pending review/attention");
-    expect(text).toContain("Parent review in 03:00");
+    expect(text).toContain("1 awaiting parent review");
+    expect(text).toContain("1 need parent attention");
+    expect(text).toContain("Result delivered to parent");
     expect(text).toContain("watchdog checked 00:12 ago");
   });
 });

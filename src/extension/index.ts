@@ -473,7 +473,7 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
     for (const agentId of [...remediation.keys()]) if (!grouped.has(agentId)) remediation.delete(agentId);
     for (const [agentId, agentFindings] of grouped) {
       const snapshot = manager.get(agentId);
-      if (!snapshot || ["closed", "replaced"].includes(snapshot.status)) continue;
+      if (!snapshot || ["closed", "replaced", "awaiting_review"].includes(snapshot.status)) continue;
       const existing = remediation.get(agentId);
       if (!existing || existing.progressAt !== snapshot.lastProgressAt) {
         const canSteer = !agentFindings.some((finding) => ["heartbeat_stale", "process_missing", "tmux_missing"].includes(finding.kind));

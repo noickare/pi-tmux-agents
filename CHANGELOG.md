@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.2 — 2026-07-26
+
+### Fixed
+
+- Do not reinterpret a settled attempt's historical tool failures or provider retries as a live execution-stall condition
+- Never auto-remediate an `awaiting_review` child with execution commands such as `steer`, `restart`, or replacement
+- Distinguish results awaiting parent review from blocked, failed, or orphaned agents in the progress widget
+- Show parked results as delivered to the parent instead of displaying the unrelated periodic supervision countdown
+
 ## 0.3.1 — 2026-07-26
 
 ### Fixed

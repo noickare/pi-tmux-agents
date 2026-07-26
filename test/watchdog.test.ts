@@ -1,7 +1,9 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { PROTOCOL_VERSION } from "../src/core/protocol.js";
 import { AgentRegistry } from "../src/core/registry.js";
 import { AgentStateStore } from "../src/core/state-store.js";
 import type { CommandRunner } from "../src/services/command-runner.js";
@@ -19,13 +21,25 @@ describe("AgentWatchdog", () => {
     dirs.push(root);
     const child = join(root, "worker-1");
     await mkdir(child);
-    await new AgentStateStore(child).writeSnapshot(snapshot({
+    const store = new AgentStateStore(child);
+    await store.writeSnapshot(snapshot({
       status: "awaiting_review",
       currentTool: undefined,
       reviewState: "pending",
       lastHeartbeatAt: "2026-07-23T10:00:00.000Z",
       lastProgressAt: "2026-07-23T09:00:00.000Z",
     }));
+    for (let sequence = 1; sequence <= 3; sequence++) {
+      await store.appendEvent({
+        protocolVersion: PROTOCOL_VERSION,
+        id: randomUUID(),
+        agentId: "worker-1",
+        sequence,
+        type: "tool_finished",
+        createdAt: "2026-07-23T09:59:59.000Z",
+        payload: { isError: true },
+      });
+    }
     const run = vi.fn<CommandRunner>().mockResolvedValue({ stdout: "", stderr: "", code: 0 });
     const monitor = new SnapshotMonitor(root, new AgentRegistry());
     const findings = await new AgentWatchdog(monitor, new TmuxService(run), {

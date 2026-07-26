@@ -2,7 +2,7 @@
 
 Persistent, steerable, tmux-backed subagents for [pi](https://github.com/earendil-works/pi-mono), with isolated Git worktrees, autonomous parent orchestration, resource-aware scheduling, watchdog supervision, and a responsive terminal UI.
 
-> **Status:** Public, production-oriented v0.3.1 release. See the [approved PRD](docs/PRD.md).
+> **Status:** Public, production-oriented v0.3.2 release. See the [approved PRD](docs/PRD.md).
 
 ## Features
 

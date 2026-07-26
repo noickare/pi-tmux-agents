@@ -33,7 +33,7 @@ export interface AgentRowViewModel {
 
 export interface DashboardViewModel {
   rows: readonly AgentRowViewModel[];
-  counts: Readonly<Record<"running" | "queued" | "idle" | "attention", number>>;
+  counts: Readonly<Record<"running" | "queued" | "idle" | "review" | "attention", number>>;
   watchdogText: string;
   nextWatchdogText: string;
   parentReviewText: string;
@@ -125,7 +125,8 @@ export function createDashboardViewModel(
       running: snapshots.filter((item) => ["running", "waiting", "retrying", "compacting"].includes(item.status)).length,
       queued: snapshots.filter((item) => item.status === "queued").length,
       idle: snapshots.filter((item) => item.status === "idle").length,
-      attention: snapshots.filter((item) => ["awaiting_review", "blocked", "failed", "orphaned"].includes(item.status)).length,
+      review: snapshots.filter((item) => item.status === "awaiting_review").length,
+      attention: snapshots.filter((item) => ["blocked", "failed", "orphaned"].includes(item.status)).length,
     },
     watchdogText: lastWatchdogAt ? `checked ${formatDuration(now.getTime() - lastWatchdogAt.getTime())} ago` : "not checked",
     nextWatchdogText: nextWatchdog === undefined ? "not scheduled" : countdown(nextWatchdog, now.getTime()),

@@ -89,7 +89,9 @@ export class AgentWatchdog {
       if (snapshot.branch && !snapshot.worktree) {
         findings.push(finding(snapshot, "error", "state_inconsistent", `Branch ${snapshot.branch} has no recorded worktree`));
       }
-      await this.checkRecentEvents(snapshot, findings);
+      // A settled attempt's retries and tool errors belong in its review packet, not
+      // execution-stall remediation. Operational checks above still protect the parked runner.
+      if (snapshot.status !== "awaiting_review") await this.checkRecentEvents(snapshot, findings);
 
       if (this.options.resourceProbe) {
         const path = snapshot.parentCwd ?? snapshot.cwd;

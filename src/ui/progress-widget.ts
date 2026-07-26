@@ -14,8 +14,8 @@ export class ProgressWidget implements Component {
     if (this.viewModel.rows.length === 0) return [];
     const { counts } = this.viewModel;
     const summary = width < 60
-      ? `Agents ${counts.running} run · ${counts.queued} queue · ${counts.idle} idle${counts.attention > 0 ? ` · !${counts.attention}` : ""}`
-      : `Agents  ${counts.running} running · ${counts.queued} queued · ${counts.idle} idle${counts.attention > 0 ? ` · ${counts.attention} pending review/attention` : ""}`;
+      ? `Agents ${counts.running} run · ${counts.queued} queue · ${counts.idle} idle${counts.review > 0 ? ` · ◆${counts.review}` : ""}${counts.attention > 0 ? ` · !${counts.attention}` : ""}`
+      : `Agents  ${counts.running} running · ${counts.queued} queued · ${counts.idle} idle${counts.review > 0 ? ` · ${counts.review} awaiting parent review` : ""}${counts.attention > 0 ? ` · ${counts.attention} need parent attention` : ""}`;
     const lines = [this.theme.fg(counts.attention > 0 ? "warning" : "accent", summary)];
 
     for (const row of this.viewModel.rows.slice(0, 3)) {
@@ -25,9 +25,13 @@ export class ProgressWidget implements Component {
       lines.push(`${this.theme.fg(color, `${row.icon} ${row.name}`)}  ${this.theme.fg("dim", row.currentActivity)}  ${this.theme.fg("muted", row.elapsed)}`);
     }
 
-    const supervision = width < 60
-      ? `Review ${this.viewModel.parentReviewText} · WD ${this.viewModel.watchdogText.replace("checked ", "")}`
-      : `Parent review ${this.viewModel.parentReviewText} · watchdog ${this.viewModel.watchdogText}`;
+    const supervision = counts.review > 0
+      ? width < 60
+        ? `Result delivered · WD ${this.viewModel.watchdogText.replace("checked ", "")}`
+        : `${counts.review === 1 ? "Result" : "Results"} delivered to parent · watchdog ${this.viewModel.watchdogText}`
+      : width < 60
+        ? `Review ${this.viewModel.parentReviewText} · WD ${this.viewModel.watchdogText.replace("checked ", "")}`
+        : `Parent review ${this.viewModel.parentReviewText} · watchdog ${this.viewModel.watchdogText}`;
     lines.push(this.theme.fg("dim", supervision));
     return lines.map((line) => truncateToWidth(line, Math.max(1, width)));
   }
