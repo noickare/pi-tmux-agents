@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.4 — 2026-08-03
+
+### Fixed
+
+- Hide closed and superseded agents from the progress widget, and remove terminal replacement lineages from persisted state and the registry after explicit cleanup succeeds
+
 ## 0.3.3 — 2026-08-03
 
 ### Fixed

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -71,6 +71,10 @@ describe("AgentOrchestrator", () => {
     registry.upsert(snapshot({ agentId: replacement.agentId, name: "Worker", status: "closed", currentTool: undefined,
       cwd: launched.worktree!, worktree: launched.worktree!, branch: launched.branch!, replaces: launched.agentId }));
     await expect(orchestrator.closeAndClean(launched.agentId, agentDir)).resolves.toBeUndefined();
+    expect(registry.get(launched.agentId)).toBeUndefined();
+    expect(registry.get(replacement.agentId)).toBeUndefined();
+    await expect(access(getAgentStateDir("parent-replace", launched.agentId, agentDir))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(getAgentStateDir("parent-replace", replacement.agentId, agentDir))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("auto-pauses low-priority work under critical pressure and resumes after recovery", async () => {

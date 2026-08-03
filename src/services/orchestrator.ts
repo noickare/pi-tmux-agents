@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentDefinition } from "../core/agents.js";
 import { getAgentStateDir, getAgentStateRoot } from "../core/paths.js";
@@ -229,15 +229,40 @@ export class AgentOrchestrator {
   }
 
   async closeAndClean(agentId: string, parentRepo: string, discard = false): Promise<void> {
-    const snapshot = this.requireAgent(agentId);
-    if (snapshot.replacedBy) return this.closeAndClean(snapshot.replacedBy, parentRepo, discard);
-    const existing = this.cleanupRuns.get(snapshot.agentId);
+    const lineage = this.replacementLineage(this.requireAgent(agentId));
+    const owner = lineage.find((snapshot) => !lineage.some((candidate) => candidate.replaces === snapshot.agentId)) ?? lineage.at(-1)!;
+    const existing = this.cleanupRuns.get(owner.agentId);
     if (existing) return existing;
-    const operation = this.closeAndCleanOwned(snapshot, parentRepo, discard).finally(() => {
-      if (this.cleanupRuns.get(snapshot.agentId) === operation) this.cleanupRuns.delete(snapshot.agentId);
-    });
-    this.cleanupRuns.set(snapshot.agentId, operation);
+    const operation = this.closeAndCleanOwned(owner, parentRepo, discard)
+      .then(async () => {
+        for (const snapshot of lineage) {
+          await rm(getAgentStateDir(this.parentSessionId, snapshot.agentId, this.agentDir), { recursive: true, force: true });
+          this.registry.remove(snapshot.agentId);
+        }
+      })
+      .finally(() => {
+        if (this.cleanupRuns.get(owner.agentId) === operation) this.cleanupRuns.delete(owner.agentId);
+      });
+    this.cleanupRuns.set(owner.agentId, operation);
     return operation;
+  }
+
+  private replacementLineage(start: AgentSnapshot): AgentSnapshot[] {
+    const snapshots = this.registry.list();
+    const ids = new Set([start.agentId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const snapshot of snapshots) {
+        if (ids.has(snapshot.agentId)) continue;
+        const connected = snapshots.some((candidate) => ids.has(candidate.agentId) && (
+          candidate.replaces === snapshot.agentId || candidate.replacedBy === snapshot.agentId ||
+          snapshot.replaces === candidate.agentId || snapshot.replacedBy === candidate.agentId
+        ));
+        if (connected) { ids.add(snapshot.agentId); changed = true; }
+      }
+    }
+    return snapshots.filter((snapshot) => ids.has(snapshot.agentId));
   }
 
   private async closeAndCleanOwned(snapshot: AgentSnapshot, parentRepo: string, discard: boolean): Promise<void> {

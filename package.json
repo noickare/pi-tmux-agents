@@ -1,6 +1,6 @@
 {
   "name": "pi-tmux-agents",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Persistent tmux-backed subagents with orchestration, watchdogs, worktrees, and a polished TUI for pi",
   "license": "MIT",
   "type": "module",
@@ -21,6 +21,7 @@
   },
   "files": [
     "src",
+    "AGENTS.md",
     "README.md",
     "CHANGELOG.md",
     "docs"

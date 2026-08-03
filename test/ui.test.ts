@@ -59,6 +59,20 @@ describe("TUI foundations", () => {
     expect(row).toMatchObject({ icon: "◆", statusLabel: "Awaiting parent review", completedAssignment: true });
   });
 
+  it("hides closed and superseded history from the progress widget", () => {
+    const terminal = [
+      snapshot({ agentId: "accepted", status: "closed", statusReason: "Accepted by parent", currentTool: undefined }),
+      snapshot({ agentId: "superseded", status: "replaced", statusReason: "Superseded by replacement agent", currentTool: undefined }),
+    ];
+    expect(new ProgressWidget(createDashboardViewModel(terminal, now), plainTheme).render(120)).toEqual([]);
+
+    const mixed = createDashboardViewModel([...terminal, snapshot({ agentId: "active" })], now);
+    const text = new ProgressWidget(mixed, plainTheme).render(120).join("\n");
+    expect(text).toContain("worker-1");
+    expect(text).not.toContain("accepted");
+    expect(text).not.toContain("superseded");
+  });
+
   it("renders explicit review timing and attention state", () => {
     const viewModel = createDashboardViewModel(agents, now, new Date("2026-07-23T10:01:48.000Z"));
     const text = new ProgressWidget(viewModel, plainTheme).render(120).join("\n");

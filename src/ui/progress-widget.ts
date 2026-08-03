@@ -11,14 +11,15 @@ export class ProgressWidget implements Component {
   }
 
   render(width: number): string[] {
-    if (this.viewModel.rows.length === 0) return [];
+    const visibleRows = this.viewModel.rows.filter((row) => !["closed", "replaced"].includes(row.status));
+    if (visibleRows.length === 0) return [];
     const { counts } = this.viewModel;
     const summary = width < 60
       ? `Agents ${counts.running} run · ${counts.queued} queue · ${counts.idle} idle${counts.review > 0 ? ` · ◆${counts.review}` : ""}${counts.attention > 0 ? ` · !${counts.attention}` : ""}`
       : `Agents  ${counts.running} running · ${counts.queued} queued · ${counts.idle} idle${counts.review > 0 ? ` · ${counts.review} awaiting parent review` : ""}${counts.attention > 0 ? ` · ${counts.attention} need parent attention` : ""}`;
     const lines = [this.theme.fg(counts.attention > 0 ? "warning" : "accent", summary)];
 
-    for (const row of this.viewModel.rows.slice(0, 3)) {
+    for (const row of visibleRows.slice(0, 3)) {
       const color = row.status === "failed" || row.status === "orphaned" ? "error"
         : row.completedAssignment ? "accent"
         : row.status === "blocked" || row.status === "paused" ? "warning" : "text";
