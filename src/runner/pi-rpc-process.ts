@@ -23,6 +23,7 @@ export class PiRpcProcess implements RpcTransport {
   private readonly listeners = new Set<(event: RpcEvent) => void>();
   private readonly pending = new Map<string, PendingRequest>();
   private readonly requestTimeoutMs: number;
+  private readonly exited: Promise<void>;
   private nextId = 0;
   private closed = false;
 
@@ -40,6 +41,7 @@ export class PiRpcProcess implements RpcTransport {
     this.child.stdout.on("end", () => decoder.end());
     this.child.stderr.on("data", (chunk: Buffer) => options.onStderr?.(chunk.toString()));
     this.child.on("error", (error) => this.rejectAll(error));
+    this.exited = new Promise((resolve) => this.child.once("close", () => resolve()));
     this.child.on("close", (code, signal) => {
       this.closed = true;
       this.rejectAll(new Error(`pi RPC exited (${signal ?? code ?? "unknown"})`));
@@ -82,10 +84,18 @@ export class PiRpcProcess implements RpcTransport {
     this.signalProcessTree("SIGCONT");
   }
 
+  async terminate(): Promise<void> {
+    if (this.closed) return;
+    this.signalProcessTree("SIGTERM");
+    if (await settlesWithin(this.exited, 5_000)) return;
+    this.signalProcessTree("SIGKILL");
+    await this.exited;
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     try { await this.send({ type: "abort" }); } catch { /* process may already be gone */ }
-    this.signalProcessTree("SIGTERM");
+    await this.terminate();
   }
 
   private signalProcessTree(signal: NodeJS.Signals): void {
@@ -122,6 +132,16 @@ export class PiRpcProcess implements RpcTransport {
     }
     this.pending.clear();
   }
+}
+
+async function settlesWithin(promise: Promise<void>, timeoutMs: number): Promise<boolean> {
+  let timeout: NodeJS.Timeout | undefined;
+  const settled = await Promise.race([
+    promise.then(() => true),
+    new Promise<false>((resolve) => { timeout = setTimeout(() => resolve(false), timeoutMs); }),
+  ]);
+  if (timeout) clearTimeout(timeout);
+  return settled;
 }
 
 async function writeJsonLine(stream: Writable, value: unknown): Promise<void> {

@@ -132,17 +132,18 @@ export class PersistentAgentRunner {
     });
   }
 
-  private async restartTransport(): Promise<void> {
+  private async restartTransport(force = false, interruptedReason = "RPC session restarted before the assignment settled"): Promise<void> {
     const interrupted = isExecutionStatus(this.snapshot.status) && this.snapshot.attemptId !== undefined;
     const statusAfterRestart = this.snapshot.status === "awaiting_review" ? "awaiting_review" : "idle";
     this.unsubscribe?.();
     this.unsubscribe = undefined;
-    await this.transport?.close();
+    if (force) await this.transport?.terminate();
+    else await this.transport?.close();
     this.transport = undefined;
     this.snapshot = withoutPendingUiRequest(this.snapshot);
     await this.setStatus("starting", "Restarting RPC session");
     await this.connect();
-    if (interrupted) await this.persistResult("interrupted", "RPC session restarted before the assignment settled");
+    if (interrupted) await this.persistResult("interrupted", interruptedReason);
     else await this.setStatus(statusAfterRestart, statusAfterRestart === "awaiting_review" ? "Result still awaiting parent review" : "RPC session restarted");
   }
 
@@ -185,7 +186,15 @@ export class PersistentAgentRunner {
           break;
         case "abort":
           await this.setStatus("aborting", "Abort requested");
-          await this.sendRpc({ id: command.id, type: "abort" });
+          try {
+            await this.sendRpc({ id: command.id, type: "abort" });
+            await this.flushEvents();
+          } catch (error) {
+            await this.flushEvents();
+            if (this.snapshot.status !== "awaiting_review") {
+              await this.restartTransport(true, `Forced RPC restart after graceful abort failed: ${(error as Error).message}`);
+            }
+          }
           break;
         case "pause":
           this.statusBeforePause = this.snapshot.status === "paused" ? this.statusBeforePause : this.snapshot.status;
@@ -245,7 +254,10 @@ export class PersistentAgentRunner {
         return;
       case "agent_settled":
         await this.markProgress();
-        await this.persistResult("completed");
+        await this.persistResult(
+          this.stopReason === "aborted" ? "interrupted" : "completed",
+          this.stopReason === "aborted" ? "Agent operation aborted by parent" : undefined,
+        );
         return;
       case "message_update": {
         const update = event.assistantMessageEvent as { type?: string; delta?: string } | undefined;

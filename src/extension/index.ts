@@ -34,6 +34,8 @@ const TOOL_ACTIONS = [
   "list", "status", "spawn", "result", "prompt", "steer", "follow_up", "revise", "accept", "take_over", "escalate", "dismiss", "pause", "resume", "abort", "restart", "replace", "set_priority", "diff", "validate", "close", "clean", "check", "merge",
 ] as const;
 
+export const HEALTHY_WATCHDOG_GUIDANCE = "Treat watchdog findings as authoritative. When the watchdog is healthy, leave running children alone; do not steer, restart, abort, or replace them merely because progress has not changed below the configured stale threshold.";
+
 const ToolParameters = Type.Object({
   action: StringEnum(TOOL_ACTIONS),
   agent: Type.Optional(Type.String({ description: "Agent id, unique prefix, or exact name" })),
@@ -89,6 +91,7 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
       "Every child result is delivered automatically and must be reviewed by the parent agent.",
       "For each awaiting_review child, inspect its result and workspace, then accept, request a revision, take over, or escalate to the human only when needed.",
       "Use tmux_agent status/check before assuming a running child is stuck, and steer it before replacing it.",
+      HEALTHY_WATCHDOG_GUIDANCE,
       "The parent decides how accepted changes enter its final deliverable; merge is only a helper and should follow validation.",
     ],
     parameters: ToolParameters,
@@ -520,7 +523,7 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
       const findings = filterCurrentFindings(lastWatchdogFindings);
       return {
         fingerprint: `${reviewAt}:${current.map((agent) => `${agent.agentId}:${agent.status}:${agent.updatedAt}`).join("|")}:${formatFindings(findings)}`,
-        content: `Periodic child review:\n${formatAgents(current)}${findings.length ? `\n\n${formatFindings(findings)}` : ""}\nCheck for stalled work, steer as needed, validate completed branches, and merge or reassign work.`,
+        content: `Periodic child review:\n${formatAgents(current)}\n\n${formatFindings(findings)}\n${HEALTHY_WATCHDOG_GUIDANCE}\nReview completed results when they arrive; intervene in active work only for a current watchdog finding or explicit user request.`,
       };
     });
   }

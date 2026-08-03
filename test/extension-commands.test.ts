@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatParentReview, parseNewAgentTask, resolveChildModel } from "../src/extension/index.js";
+import { formatParentReview, HEALTHY_WATCHDOG_GUIDANCE, parseNewAgentTask, resolveChildModel } from "../src/extension/index.js";
 import { snapshot } from "./fixtures.js";
 
 describe("/agents command parsing", () => {
@@ -13,6 +13,13 @@ describe("/agents command parsing", () => {
     expect(resolveChildModel("anthropic/claude-sonnet-4-6", { provider: "openai-codex", id: "gpt-5.4" })).toBe("anthropic/claude-sonnet-4-6");
     expect(resolveChildModel(undefined, undefined)).toBeUndefined();
     expect(() => resolveChildModel("gpt-5.4", undefined)).toThrow("provider/model");
+  });
+
+  it("prevents healthy children from being treated as stalled", () => {
+    expect(HEALTHY_WATCHDOG_GUIDANCE).toContain("watchdog findings as authoritative");
+    expect(HEALTHY_WATCHDOG_GUIDANCE).toContain("leave running children alone");
+    expect(HEALTHY_WATCHDOG_GUIDANCE).toContain("do not steer, restart, abort, or replace");
+    expect(HEALTHY_WATCHDOG_GUIDANCE).toContain("configured stale threshold");
   });
 
   it("delivers a decision-ready result packet to the parent agent", () => {

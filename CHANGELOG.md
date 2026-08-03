@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3 — 2026-08-03
+
+### Fixed
+
+- Force-restart an unresponsive child RPC session when graceful abort exceeds the RPC request timeout, preserve the partial attempt as an interrupted review result, and keep the child available for revision
+- Test against Pi 0.83.x, matching the supported runtime used by the extension
+- Make healthy watchdog status authoritative in parent guidance so short periods without visible progress do not trigger premature steering, abort, restart, or replacement
+
 ## 0.3.2 — 2026-07-26
 
 ### Fixed

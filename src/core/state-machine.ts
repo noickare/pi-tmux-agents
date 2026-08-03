@@ -14,7 +14,7 @@ const TRANSITIONS: Readonly<Record<AgentStatus, ReadonlySet<AgentStatus>>> = {
   compacting: new Set(["starting", "running", "paused", "aborting", "failed", "closed", "orphaned", "replaced"]),
   paused: new Set(["starting", "queued", "idle", "running", "awaiting_review", "aborting", "closed", "orphaned", "failed", "replaced"]),
   blocked: new Set(["starting", "running", "paused", "aborting", "failed", "replaced", "closed"]),
-  aborting: new Set(["idle", "awaiting_review", "failed", "closed", "orphaned", "replaced"]),
+  aborting: new Set(["starting", "idle", "awaiting_review", "failed", "closed", "orphaned", "replaced"]),
   failed: new Set(["queued", "starting", "replaced", "closed"]),
   replaced: new Set(["closed"]),
   closed: new Set(),

@@ -1,6 +1,6 @@
 {
   "name": "pi-tmux-agents",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Persistent tmux-backed subagents with orchestration, watchdogs, worktrees, and a polished TUI for pi",
   "license": "MIT",
   "type": "module",
@@ -47,9 +47,9 @@
     "typebox": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.81.1",
-    "@earendil-works/pi-coding-agent": "^0.81.1",
-    "@earendil-works/pi-tui": "^0.81.1",
+    "@earendil-works/pi-ai": "^0.83.0",
+    "@earendil-works/pi-coding-agent": "^0.83.0",
+    "@earendil-works/pi-tui": "^0.83.0",
     "@types/node": "^24.12.4",
     "typebox": "^1.1.38",
     "typescript": "^5.9.3",

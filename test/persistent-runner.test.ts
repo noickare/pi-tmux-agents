@@ -16,11 +16,18 @@ class FakeTransport implements RpcTransport {
   readonly commands: RpcCommand[] = [];
   paused = false;
   closed = false;
+  terminated = false;
   nextError: string | undefined;
+  nextThrownError: Error | undefined;
   private readonly listeners = new Set<(event: RpcEvent) => void>();
 
   async send(command: RpcCommand): Promise<RpcResponse> {
     this.commands.push(command);
+    if (this.nextThrownError) {
+      const error = this.nextThrownError;
+      this.nextThrownError = undefined;
+      throw error;
+    }
     if (this.nextError) {
       const error = this.nextError;
       this.nextError = undefined;
@@ -31,6 +38,7 @@ class FakeTransport implements RpcTransport {
   subscribe(listener: (event: RpcEvent) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   pause(): void { this.paused = true; }
   resume(): void { this.paused = false; }
+  async terminate(): Promise<void> { this.terminated = true; this.closed = true; }
   async close(): Promise<void> { this.closed = true; }
   emit(event: RpcEvent): void { for (const listener of this.listeners) listener(event); }
 }
@@ -185,6 +193,49 @@ describe("PersistentAgentRunner", () => {
     await second.start();
     expect(second.currentSnapshot).toMatchObject({ status: "awaiting_review", latestResult: { finalResponse: "Durable result", outcome: "completed" } });
     await second.stop();
+  });
+
+  it("records an aborted settled run as interrupted", async () => {
+    const { store, job } = await setup();
+    await store.appendCommand(createCommand({ id: "abort-result", agentId: job.agentId, type: "prompt", payload: { message: "Long task" } }));
+    const transport = new FakeTransport();
+    const runner = new PersistentAgentRunner(job, store, async () => transport, { heartbeatIntervalMs: 60_000, commandPollIntervalMs: 60_000, output: { write() {} } });
+    await runner.start();
+    transport.emit({ type: "agent_start" });
+    transport.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Partial work" } });
+    transport.emit({ type: "message_end", message: { role: "assistant", content: [], stopReason: "aborted" } });
+    transport.emit({ type: "agent_settled" });
+    await runner.flushEvents();
+    expect(runner.currentSnapshot).toMatchObject({ status: "awaiting_review", latestResult: { outcome: "interrupted", error: "Agent operation aborted by parent" } });
+    await runner.stop();
+  });
+
+  it("force-restarts RPC after graceful abort fails and keeps the child revisable", async () => {
+    const { store, job } = await setup();
+    await store.appendCommand(createCommand({ id: "abort-timeout", agentId: job.agentId, type: "prompt", payload: { message: "Long task" } }));
+    const first = new FakeTransport();
+    const second = new FakeTransport();
+    const transports = [first, second];
+    const runner = new PersistentAgentRunner(job, store, async () => transports.shift()!, { heartbeatIntervalMs: 60_000, commandPollIntervalMs: 60_000, output: { write() {} } });
+    await runner.start();
+    first.emit({ type: "agent_start" });
+    first.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Partial work" } });
+    await runner.flushEvents();
+    first.nextThrownError = new Error("RPC command timed out: abort");
+    await store.appendCommand(createCommand({ id: "abort-command", agentId: job.agentId, type: "abort" }));
+    await runner.processCommands();
+
+    expect(first.terminated).toBe(true);
+    expect(runner.currentSnapshot).toMatchObject({
+      status: "awaiting_review",
+      latestResult: { outcome: "interrupted", error: expect.stringContaining("graceful abort failed") },
+    });
+    expect((await store.readEvents()).records.at(-1)).toMatchObject({ type: "command_acknowledged", commandId: "abort-command", payload: { success: true } });
+
+    await store.appendCommand(createCommand({ id: "revision", agentId: job.agentId, type: "revise", payload: { message: "Finish concisely" } }));
+    await runner.processCommands();
+    expect(second.commands).toContainEqual({ id: "revision", type: "prompt", message: "Finish concisely" });
+    await runner.stop();
   });
 
   it("does not acknowledge a rejected RPC prompt as successful", async () => {

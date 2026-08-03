@@ -24,6 +24,7 @@ export interface RpcTransport {
   subscribe(listener: (event: RpcEvent) => void): () => void;
   pause(): void;
   resume(): void;
+  terminate(): Promise<void>;
   close(): Promise<void>;
 }
 

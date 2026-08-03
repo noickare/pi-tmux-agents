@@ -9,6 +9,10 @@ describe("agent state machine", () => {
     expect(canTransition("awaiting_review", "idle")).toBe(false);
   });
 
+  it("allows a forced RPC restart while aborting", () => {
+    expect(canTransition("aborting", "starting")).toBe(true);
+  });
+
   it("rejects impossible transitions", () => {
     expect(() => assertTransition("closed", "running")).toThrow("closed -> running");
   });
