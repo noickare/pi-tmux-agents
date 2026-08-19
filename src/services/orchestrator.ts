@@ -103,11 +103,24 @@ export class AgentOrchestrator {
   async drainQueue(): Promise<number> {
     let admitted = 0;
     for (const item of await this.queue.list()) {
+      const snapshot = this.registry.get(item.agentId);
+      if (snapshot && snapshot.status !== "queued") {
+        await this.queue.remove(item.id);
+        continue;
+      }
       const decision = await this.admission(item.input);
       if (!decision.admitted) continue;
-      await this.launch(item.agentId, item.input);
-      await this.queue.remove(item.id);
-      admitted++;
+      const claimed = await this.queue.take(item.id);
+      if (!claimed) continue;
+      const current = this.registry.get(claimed.agentId);
+      if (current && current.status !== "queued") continue;
+      try {
+        await this.launch(claimed.agentId, claimed.input);
+        admitted++;
+      } catch (error) {
+        await this.queue.add(claimed);
+        throw error;
+      }
     }
     return admitted;
   }
@@ -123,12 +136,17 @@ export class AgentOrchestrator {
     const effectiveType = snapshot.status === "idle" && (type === "steer" || type === "follow_up") ? "prompt" : type;
     const id = randomUUID();
     const commandPayload = { ...payload, ...(message === undefined ? {} : { message }) };
-    await new AgentStateStore(getAgentStateDir(this.parentSessionId, snapshot.agentId, this.agentDir)).appendCommand(createCommand({
+    const command = createCommand({
       id,
       agentId: snapshot.agentId,
       type: effectiveType,
       ...(Object.keys(commandPayload).length ? { payload: commandPayload } : {}),
-    }));
+    });
+    if (snapshot.status === "queued") {
+      await this.cancelQueued(snapshot, command);
+      return id;
+    }
+    await new AgentStateStore(getAgentStateDir(this.parentSessionId, snapshot.agentId, this.agentDir)).appendCommand(command);
     return id;
   }
 
@@ -151,9 +169,8 @@ export class AgentOrchestrator {
     const oldStore = new AgentStateStore(oldDirectory);
 
     if (snapshot.status === "queued") {
-      const queued = (await this.queue.list()).find((item) => item.agentId === snapshot.agentId);
+      const queued = await this.queue.takeByAgent(snapshot.agentId);
       if (!queued) throw new Error(`Queued request for ${snapshot.agentId} is missing`);
-      await this.queue.remove(queued.id);
       await oldStore.writeSnapshot({ ...snapshot, status: "replaced", statusReason: reason, replacedBy: replacementId, updatedAt: new Date().toISOString() });
       this.registry.upsert({ ...snapshot, status: "replaced", statusReason: reason, replacedBy: replacementId, updatedAt: new Date().toISOString() });
       const input = { ...queued.input, replaces: snapshot.agentId, task: handoffPrompt(snapshot, reason) };
@@ -428,6 +445,35 @@ export class AgentOrchestrator {
     return { ...this.options.resourceProbeOptions, activeWeight, providerBackoff };
   }
 
+  private async cancelQueued(snapshot: AgentSnapshot, command: ReturnType<typeof createCommand>): Promise<void> {
+    const queued = await this.queue.takeByAgent(snapshot.agentId);
+    if (!queued) throw new Error(`Queued request for ${snapshot.agentId} is missing`);
+    const timestamp = new Date().toISOString();
+    const reason = typeof command.payload?.reason === "string"
+      ? command.payload.reason
+      : command.type === "abort" ? "Aborted before launch" : "Closed before launch";
+    const updated: AgentSnapshot = {
+      ...snapshot,
+      status: "closed",
+      statusReason: reason,
+      updatedAt: timestamp,
+      lastProgressAt: timestamp,
+      recentActivity: [
+        ...(snapshot.recentActivity ?? []),
+        { at: timestamp, kind: "command" as const, text: `${command.type}: ${reason}` },
+      ].slice(-50),
+    };
+    const store = new AgentStateStore(getAgentStateDir(this.parentSessionId, snapshot.agentId, this.agentDir));
+    try {
+      await store.appendCommand(command);
+      await store.writeSnapshot(updated);
+      this.registry.upsert(updated);
+    } catch (error) {
+      await this.queue.add(queued);
+      throw error;
+    }
+  }
+
   private async writeQueuedSnapshot(item: QueuedSpawn): Promise<void> {
     const timestamp = new Date().toISOString();
     const snapshot: AgentSnapshot = {
@@ -468,6 +514,9 @@ export class AgentOrchestrator {
 
 function assertCommandAllowed(snapshot: AgentSnapshot, type: AgentCommandType): void {
   const reviewCommands = new Set<AgentCommandType>(["revise", "accept", "take_over", "escalate", "dismiss"]);
+  if (snapshot.status === "queued" && !["abort", "close"].includes(type)) {
+    throw new Error(`${type} requires a launched agent; ${snapshot.agentId} is still queued`);
+  }
   if (snapshot.status === "awaiting_review") {
     if (["prompt", "steer", "follow_up", "close"].includes(type)) throw new Error(`Agent ${snapshot.agentId} awaits parent review; use revise, accept, take_over, escalate, or dismiss`);
   } else if (reviewCommands.has(type)) {

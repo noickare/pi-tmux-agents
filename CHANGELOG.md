@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.5 — 2026-08-19
+
+### Fixed
+
+- Cancel queued agents directly before launch instead of writing abort or close commands that no runner exists to consume
+- Claim admitted queue entries before launch so cancellation cannot leave a stale entry that starts later
+- Clarify that an empty agent list is scoped to the current parent Pi session
+
 ## 0.3.4 — 2026-08-03
 
 ### Fixed

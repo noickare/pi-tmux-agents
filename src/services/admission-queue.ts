@@ -34,8 +34,26 @@ export class AdmissionQueue {
   }
 
   async remove(id: string): Promise<void> {
-    await serializeMutation(this.path, async () => {
-      await this.write((await this.list()).filter((item) => item.id !== id));
+    await this.take(id);
+  }
+
+  async take(id: string): Promise<QueuedSpawn | undefined> {
+    return serializeMutation(this.path, async () => {
+      const items = await this.list();
+      const item = items.find((candidate) => candidate.id === id);
+      if (!item) return undefined;
+      await this.write(items.filter((candidate) => candidate.id !== id));
+      return item;
+    });
+  }
+
+  async takeByAgent(agentId: string): Promise<QueuedSpawn | undefined> {
+    return serializeMutation(this.path, async () => {
+      const items = await this.list();
+      const item = items.find((candidate) => candidate.agentId === agentId);
+      if (!item) return undefined;
+      await this.write(items.filter((candidate) => candidate.agentId !== agentId));
+      return item;
     });
   }
 

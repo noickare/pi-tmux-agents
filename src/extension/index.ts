@@ -172,13 +172,13 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
       }
       if (params.action === "close") {
         await manager.closeAndClean(agent, ctx.cwd, params.discard ?? false);
-        return toolResult(`Close queued for ${agent}`, { agents: manager.list() });
+        return toolResult(`Closed and cleaned ${agent}`, { agents: manager.list() });
       }
       const type = params.action as AgentCommandType;
       const message = ["prompt", "steer", "follow_up", "revise"].includes(type) ? required(params.task, "task") : undefined;
       const commandId = await manager.command(agent, type, message, params.reason ? { reason: params.reason } : {});
       if (type === "escalate") ctx.ui.notify(`Parent agent requested human input for ${agent}${params.reason ? `: ${params.reason}` : ""}`, "warning");
-      return toolResult(`${type} queued for ${agent} (${commandId})${type === "escalate" ? "\nHuman escalation recorded; explain the decision needed to the user." : ""}`, { commandId, agents: manager.list() });
+      return toolResult(`${type} requested for ${agent} (${commandId})${type === "escalate" ? "\nHuman escalation recorded; explain the decision needed to the user." : ""}`, { commandId, agents: manager.list() });
     },
     renderCall(args, theme) {
       return new Text(theme.fg("toolTitle", theme.bold("tmux_agent ")) + theme.fg("accent", args.action) + (args.agent ? theme.fg("muted", ` ${args.agent}`) : ""), 0, 0);
@@ -707,7 +707,9 @@ function formatAgent(agent: AgentSnapshot): string {
     `${agent.tmuxTarget ? `\ntmux: ${agent.tmuxTarget}` : ""}${agent.replaces ? `\nReplaces: ${agent.replaces}` : ""}${agent.replacedBy ? `\nReplaced by: ${agent.replacedBy}` : ""}`;
 }
 function formatAgents(agents: readonly AgentSnapshot[]): string {
-  return agents.length ? agents.map((agent) => `${agent.agentId} [${agent.status}] ${agent.currentTool ?? agent.task ?? "idle"}`).join("\n") : "No persistent agents.";
+  return agents.length
+    ? agents.map((agent) => `${agent.agentId} [${agent.status}] ${agent.currentTool ?? agent.task ?? "idle"}`).join("\n")
+    : "No persistent agents for this parent Pi session.";
 }
 function formatFindings(findings: readonly WatchdogFinding[]): string {
   return findings.length ? findings.map((finding) => `${finding.severity === "error" ? "✗" : "!"} ${finding.agentId}: ${finding.message}`).join("\n") : "Watchdog healthy.";

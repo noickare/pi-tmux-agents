@@ -125,4 +125,55 @@ describe("AgentOrchestrator", () => {
     expect(await orchestrator.drainQueue()).toBe(1);
     expect(run.mock.calls.some((call) => call[1][0] === "new-session")).toBe(true);
   });
+
+  it("cancels queued work directly instead of writing commands with no runner", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-orchestrator-cancel-queue-"));
+    dirs.push(agentDir);
+    const run = vi.fn<CommandRunner>().mockImplementation(async (_command, args) => ({ stdout: "", stderr: "", code: args[0] === "has-session" ? 1 : 0 }));
+    let constrained = true;
+    const resourceProbe = {
+      async snapshot() {
+        return {
+          cpuCount: 8, loadAverage1m: 1, totalMemoryBytes: 16 * 1024 ** 3,
+          availableMemoryBytes: constrained ? 256 * 1024 ** 2 : 12 * 1024 ** 3,
+          availableDiskBytes: 100 * 1024 ** 3, activeWeight: 0,
+          parentReservedCpu: 1, parentReservedMemoryBytes: 1024 ** 3, providerBackoff: false,
+        };
+      },
+    };
+    const registry = new AgentRegistry();
+    const orchestrator = new AgentOrchestrator("parent-cancel", agentDir, registry, new RunnerLauncher(new TmuxService(run)), new WorktreeService(run), { resourceProbe });
+    const queued = await orchestrator.spawn({ name: "Scout", task: "Inspect auth", cwd: agentDir, mutating: false });
+
+    await expect(orchestrator.command(queued.agentId, "steer", "Do something else")).rejects.toThrow("requires a launched agent");
+    const commandId = await orchestrator.command(queued.agentId, "abort", undefined, { reason: "No longer needed" });
+    expect(await orchestrator.queueState()).toEqual([]);
+    expect(registry.get(queued.agentId)).toMatchObject({ status: "closed", statusReason: "No longer needed" });
+    const commands = await readFile(join(getAgentStateDir("parent-cancel", queued.agentId, agentDir), "commands.jsonl"), "utf8");
+    expect(commands).toContain(commandId);
+    expect(commands).toContain('"type":"abort"');
+
+    constrained = false;
+    expect(await orchestrator.drainQueue()).toBe(0);
+    expect(run.mock.calls.some((call) => call[1][0] === "new-session")).toBe(false);
+  });
+
+  it("closes and cleans a queued agent without waiting for a nonexistent runner", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-orchestrator-close-queue-"));
+    dirs.push(agentDir);
+    const run = vi.fn<CommandRunner>().mockResolvedValue({ stdout: "", stderr: "", code: 0 });
+    const resourceProbe = { async snapshot() { return {
+      cpuCount: 8, loadAverage1m: 1, totalMemoryBytes: 16 * 1024 ** 3,
+      availableMemoryBytes: 256 * 1024 ** 2, availableDiskBytes: 100 * 1024 ** 3,
+      activeWeight: 0, parentReservedCpu: 1, parentReservedMemoryBytes: 1024 ** 3, providerBackoff: false,
+    }; } };
+    const registry = new AgentRegistry();
+    const orchestrator = new AgentOrchestrator("parent-close", agentDir, registry, new RunnerLauncher(new TmuxService(run)), new WorktreeService(run), { resourceProbe });
+    const queued = await orchestrator.spawn({ name: "Scout", task: "Inspect auth", cwd: agentDir, mutating: false });
+
+    await expect(orchestrator.closeAndClean(queued.agentId, agentDir)).resolves.toBeUndefined();
+    expect(await orchestrator.queueState()).toEqual([]);
+    expect(registry.get(queued.agentId)).toBeUndefined();
+    await expect(access(getAgentStateDir("parent-close", queued.agentId, agentDir))).rejects.toMatchObject({ code: "ENOENT" });
+  });
 });
