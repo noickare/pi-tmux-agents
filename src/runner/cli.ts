@@ -22,13 +22,18 @@ async function main(path: string): Promise<void> {
 
   const store = new AgentStateStore(job.stateDirectory);
   const runner = new PersistentAgentRunner(job, store, async () => new PiRpcProcess(await buildPiRpcOptions(job)));
-  let stopping = false;
-  const stop = async () => {
-    if (stopping) return;
-    stopping = true;
-    await runner.stop();
-    await lock.release();
+  let stopPromise: Promise<void> | undefined;
+  const stop = () => {
+    stopPromise ??= (async () => {
+      try {
+        await runner.stop();
+      } finally {
+        await lock.release();
+      }
+    })();
+    return stopPromise;
   };
+  process.once("SIGHUP", () => void stop().finally(() => process.exit(129)));
   process.once("SIGINT", () => void stop().finally(() => process.exit(130)));
   process.once("SIGTERM", () => void stop().finally(() => process.exit(143)));
 

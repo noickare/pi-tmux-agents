@@ -6,12 +6,14 @@ describe("ParentWakeCoordinator", () => {
     const coordinator = new ParentWakeCoordinator();
     let status = "running";
     coordinator.enqueue("watchdog", () => ({ content: "stale running finding", fingerprint: "running" }));
+    expect(coordinator.hasPending()).toBe(true);
     status = "replaced";
     coordinator.enqueue("watchdog", () => status === "running"
       ? { content: "stale running finding", fingerprint: "running" }
       : undefined);
 
     expect(coordinator.drain()).toEqual([]);
+    expect(coordinator.hasPending()).toBe(false);
   });
 
   it("suppresses unchanged reports until the key is cleared", () => {

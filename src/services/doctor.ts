@@ -16,13 +16,14 @@ export class AgentsDoctor {
 
   async check(stateRoot: string): Promise<DoctorCheck[]> {
     const checks: DoctorCheck[] = [];
-    checks.push(await this.version("tmux", ["-V"], "tmux", 3, 2, installTmuxCommand()));
-    checks.push(await this.version("git", ["--version"], "git", 2, 20, "Install Git 2.20 or newer using your system package manager."));
+    checks.push(await this.version("tmux", ["-V"], "tmux", [3, 2, 0], installTmuxCommand()));
+    checks.push(await this.version("git", ["--version"], "git", [2, 20, 0], "Install Git 2.20 or newer using your system package manager."));
+    checks.push(await this.version("pi", ["--version"], "pi", [0, 84, 2], "Run `pi update --self` to install Pi 0.84.2 or newer."));
     checks.push(nodeVersionCheck());
     checks.push(await writableDirectory(stateRoot));
     checks.push(await this.tmuxConnectivity());
     checks.push(await this.tmuxOption("extended-keys", "on", "Add `set -g extended-keys on` to ~/.tmux.conf."));
-    if (versionAtLeast(checks[0]?.detail ?? "", 3, 5)) {
+    if (versionAtLeast(checks[0]?.detail ?? "", [3, 5, 0])) {
       checks.push(await this.tmuxOption("extended-keys-format", "csi-u", "Add `set -g extended-keys-format csi-u` to ~/.tmux.conf."));
     }
     checks.push(await this.resourceProbe(stateRoot));
@@ -31,10 +32,10 @@ export class AgentsDoctor {
     return checks;
   }
 
-  private async version(command: string, args: string[], name: string, major: number, minor: number, remediation: string): Promise<DoctorCheck> {
+  private async version(command: string, args: string[], name: string, minimum: readonly [number, number, number], remediation: string): Promise<DoctorCheck> {
     const result = await this.run(command, args, { timeout: 5_000 });
     const detail = (result.stdout || result.stderr).trim();
-    return result.code === 0 && versionAtLeast(detail, major, minor)
+    return result.code === 0 && versionAtLeast(detail, minimum)
       ? { name, ok: true, detail }
       : { name, ok: false, detail: detail || "not available", remediation };
   }
@@ -139,17 +140,20 @@ async function writableDirectory(path: string): Promise<DoctorCheck> {
 
 function nodeVersionCheck(): DoctorCheck {
   const detail = process.version;
-  return versionAtLeast(detail, 22, 19)
+  return versionAtLeast(detail, [22, 19, 0])
     ? { name: "node", ok: true, detail }
     : { name: "node", ok: false, detail, remediation: "Install Node.js 22.19 or newer." };
 }
 
-function versionAtLeast(value: string, major: number, minor: number): boolean {
-  const match = value.match(/(\d+)\.(\d+)/);
+function versionAtLeast(value: string, minimum: readonly [number, number, number]): boolean {
+  const match = value.match(/(\d+)\.(\d+)(?:\.(\d+))?/);
   if (!match) return false;
-  const actualMajor = Number(match[1]);
-  const actualMinor = Number(match[2]);
-  return actualMajor > major || (actualMajor === major && actualMinor >= minor);
+  const actual = [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)] as const;
+  for (let index = 0; index < minimum.length; index++) {
+    if (actual[index]! > minimum[index]!) return true;
+    if (actual[index]! < minimum[index]!) return false;
+  }
+  return true;
 }
 
 function installTmuxCommand(): string {

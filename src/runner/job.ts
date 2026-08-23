@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { assertSafeId } from "../core/paths.js";
-import { PROTOCOL_VERSION, type AgentPriority, type AgentWeight } from "../core/protocol.js";
+import { PROTOCOL_VERSION, type AgentPriority, type AgentThinkingLevel, type AgentWeight } from "../core/protocol.js";
 
 export interface AgentJob {
   protocolVersion: typeof PROTOCOL_VERSION;
@@ -22,6 +22,7 @@ export interface AgentJob {
   branch?: string;
   baseCommit?: string;
   model?: string;
+  thinkingLevel?: AgentThinkingLevel;
   tools?: readonly string[];
   systemPrompt?: string;
 }

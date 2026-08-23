@@ -16,11 +16,11 @@ describe("pi RPC invocation", () => {
     const job: AgentJob = {
       protocolVersion: PROTOCOL_VERSION, parentSessionId: "parent", agentId: "worker", name: "Worker", cwd: "/repo",
       stateDirectory: directory, sessionId: "session-id", tmuxTarget: "pi-agents-parent:worker", approveProject: true,
-      model: "provider/model", tools: ["read", "edit"], systemPrompt: "Work carefully.",
+      model: "provider/model", thinkingLevel: "high", tools: ["read", "edit"], systemPrompt: "Work carefully.",
     };
     const options = await buildPiRpcOptions(job);
     expect(options.args).toEqual(expect.arrayContaining([
-      "--mode", "rpc", "--session-id", "session-id", "--no-extensions", "--approve", "--model", "provider/model", "--tools", "read,edit",
+      "--mode", "rpc", "--session-id", "session-id", "--no-extensions", "--approve", "--model", "provider/model", "--thinking", "high", "--tools", "read,edit",
     ]));
     const promptIndex = options.args.indexOf("--append-system-prompt");
     expect(await readFile(options.args[promptIndex + 1]!, "utf8")).toBe("Work carefully.");

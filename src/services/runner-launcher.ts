@@ -3,10 +3,9 @@ import { mkdir, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createCommand, PROTOCOL_VERSION, type AgentPriority, type AgentWeight } from "../core/protocol.js";
+import { createCommand, PROTOCOL_VERSION, type AgentPriority, type AgentThinkingLevel, type AgentWeight } from "../core/protocol.js";
 import { AgentStateStore } from "../core/state-store.js";
-import type { AgentJob } from "../runner/job.js";
-import { writeAgentJob } from "../runner/job.js";
+import { readAgentJob, type AgentJob, writeAgentJob } from "../runner/job.js";
 import { TmuxService } from "./tmux.js";
 
 export interface LaunchAgentInput {
@@ -17,6 +16,7 @@ export interface LaunchAgentInput {
   stateDirectory: string;
   prompt?: string;
   model?: string;
+  thinkingLevel?: AgentThinkingLevel;
   tools?: readonly string[];
   systemPrompt?: string;
   approveProject?: boolean;
@@ -36,7 +36,7 @@ export interface LaunchedAgent {
 }
 
 export class RunnerLauncher {
-  private readonly sessionLaunches = new Map<string, Promise<void>>();
+  private readonly sessionLaunches = new Map<string, Promise<boolean>>();
 
   constructor(private readonly tmux: TmuxService) {}
 
@@ -63,6 +63,7 @@ export class RunnerLauncher {
       ...(input.branch ? { branch: input.branch } : {}),
       ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}),
       ...(input.model ? { model: input.model } : {}),
+      ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
       ...(input.tools?.length ? { tools: input.tools } : {}),
       ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
     };
@@ -88,23 +89,38 @@ export class RunnerLauncher {
     }
   }
 
-  private async launchWindow(session: string, window: string, command: readonly string[], cwd: string): Promise<void> {
-    const previous = this.sessionLaunches.get(session) ?? Promise.resolve();
-    const launch = previous.catch(() => undefined).then(async () => {
-      if (await this.tmux.hasSession(session)) {
-        await this.tmux.createWindow(session, window, command, cwd);
-        return;
-      }
+  async recover(jobPath: string): Promise<boolean> {
+    const job = await readAgentJob(jobPath);
+    const session = `pi-agents-${job.parentSessionId}`;
+    const target = this.tmux.target(session, job.agentId);
+    if (job.tmuxTarget !== target) throw new Error(`Agent job tmux target does not match ${target}`);
+    return this.launchWindow(session, job.agentId, runnerCommand(jobPath), job.cwd);
+  }
+
+  private async launchWindow(session: string, window: string, command: readonly string[], cwd: string): Promise<boolean> {
+    const previous = this.sessionLaunches.get(session) ?? Promise.resolve(false);
+    const launch = previous.catch(() => false).then(async () => {
+      if (await this.tmux.hasSession(session)) return this.launchInExistingSession(session, window, command, cwd);
       try {
         await this.tmux.createSession(session, window, command, cwd);
+        return true;
       } catch (error) {
         if (!await this.tmux.hasSession(session)) throw error;
-        await this.tmux.createWindow(session, window, command, cwd);
+        return this.launchInExistingSession(session, window, command, cwd);
       }
     });
     this.sessionLaunches.set(session, launch);
-    try { await launch; }
+    try { return await launch; }
     finally { if (this.sessionLaunches.get(session) === launch) this.sessionLaunches.delete(session); }
+  }
+
+  private async launchInExistingSession(session: string, window: string, command: readonly string[], cwd: string): Promise<boolean> {
+    const existing = (await this.tmux.listWindows(session)).find((candidate) => candidate.name === window);
+    if (existing && !existing.dead) return false;
+    if (existing) await this.tmux.killWindow(session, window);
+    if (await this.tmux.hasSession(session)) await this.tmux.createWindow(session, window, command, cwd);
+    else await this.tmux.createSession(session, window, command, cwd);
+    return true;
   }
 }
 

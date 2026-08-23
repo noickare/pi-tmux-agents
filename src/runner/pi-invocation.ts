@@ -15,6 +15,7 @@ export async function buildPiRpcOptions(job: AgentJob): Promise<PiRpcProcessOpti
     job.approveProject ? "--approve" : "--no-approve",
   ];
   if (job.model) args.push("--model", job.model);
+  if (job.thinkingLevel) args.push("--thinking", job.thinkingLevel);
   if (job.tools?.length) args.push("--tools", job.tools.join(","));
   if (job.systemPrompt?.trim()) {
     const promptPath = join(job.stateDirectory, "system-prompt.md");

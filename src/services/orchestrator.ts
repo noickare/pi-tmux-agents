@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentDefinition } from "../core/agents.js";
 import { getAgentStateDir, getAgentStateRoot } from "../core/paths.js";
@@ -9,6 +9,7 @@ import {
   type AgentCommandType,
   type AgentPriority,
   type AgentSnapshot,
+  type AgentThinkingLevel,
   type AgentWeight,
 } from "../core/protocol.js";
 import { AgentRegistry } from "../core/registry.js";
@@ -28,6 +29,7 @@ export interface SpawnAgentInput {
   cwd: string;
   definition?: AgentDefinition;
   model?: string;
+  thinkingLevel?: AgentThinkingLevel;
   tools?: readonly string[];
   mutating?: boolean;
   approveProject?: boolean;
@@ -58,6 +60,11 @@ export interface RebalanceResult {
   paused: readonly string[];
   resumed: readonly string[];
   resources: ResourceSnapshot;
+}
+
+export interface RunnerRecoveryResult {
+  recovered: string[];
+  failed: Array<{ agentId: string; reason: string }>;
 }
 
 export interface OrchestratorOptions {
@@ -91,6 +98,44 @@ export class AgentOrchestrator {
   get(agentId: string): AgentSnapshot | undefined { return this.registry.get(agentId); }
   queueState(): Promise<readonly QueuedSpawn[]> { return this.queue.list(); }
   queueHealth() { return this.queue.health(); }
+
+  async recoverRunners(): Promise<RunnerRecoveryResult> {
+    const recovered: string[] = [];
+    const failed: RunnerRecoveryResult["failed"] = [];
+    const stateRoot = getAgentStateRoot(this.parentSessionId, this.agentDir);
+    let entries;
+    try {
+      entries = await readdir(stateRoot, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { recovered, failed };
+      return { recovered, failed: [{ agentId: "state", reason: (error as Error).message }] };
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const stateDirectory = join(stateRoot, entry.name);
+      const jobPath = join(stateDirectory, "agent.json");
+      let job;
+      try {
+        job = await readAgentJob(jobPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        failed.push({ agentId: entry.name, reason: (error as Error).message });
+        continue;
+      }
+      if (job.parentSessionId !== this.parentSessionId || job.agentId !== entry.name || job.stateDirectory !== stateDirectory) {
+        failed.push({ agentId: entry.name, reason: "Agent job identity does not match its state directory" });
+        continue;
+      }
+      const snapshot = this.registry.get(job.agentId) ?? await new AgentStateStore(stateDirectory).readSnapshot();
+      if (snapshot && !runnerShouldRecover(snapshot)) continue;
+      try {
+        if (await this.launcher.recover(jobPath)) recovered.push(job.agentId);
+      } catch (error) {
+        failed.push({ agentId: job.agentId, reason: (error as Error).message });
+      }
+    }
+    return { recovered, failed };
+  }
 
   async spawn(input: SpawnAgentInput): Promise<SpawnedAgent> {
     const normalized = normalizeInput(input);
@@ -146,7 +191,11 @@ export class AgentOrchestrator {
       await this.cancelQueued(snapshot, command);
       return id;
     }
-    await new AgentStateStore(getAgentStateDir(this.parentSessionId, snapshot.agentId, this.agentDir)).appendCommand(command);
+    const stateDirectory = getAgentStateDir(this.parentSessionId, snapshot.agentId, this.agentDir);
+    if (runnerShouldRecover(snapshot) && snapshot.tmuxTarget && (snapshot.pid === undefined || !processAlive(snapshot.pid))) {
+      await this.launcher.recover(join(stateDirectory, "agent.json"));
+    }
+    await new AgentStateStore(stateDirectory).appendCommand(command);
     return id;
   }
 
@@ -201,6 +250,7 @@ export class AgentOrchestrator {
       task: prompt,
       cwd: job.parentCwd ?? snapshot.parentCwd ?? (snapshot.worktree ? snapshot.cwd : job.cwd),
       ...(job.model ? { model: job.model } : {}),
+      ...(job.thinkingLevel ? { thinkingLevel: job.thinkingLevel } : {}),
       ...(job.tools ? { tools: job.tools } : {}),
       mutating: job.mutating ?? snapshot.mutating ?? Boolean(snapshot.worktree),
       approveProject: job.approveProject,
@@ -286,8 +336,9 @@ export class AgentOrchestrator {
     const activeOwner = snapshot.worktree && this.registry.list().find((item) => item.agentId !== snapshot.agentId && item.worktree === snapshot.worktree && !isTerminalStatus(item.status));
     if (activeOwner) throw new Error(`Worktree is still owned by active agent ${activeOwner.agentId}`);
     const runnerMayBeAlive = snapshot.pid !== undefined && processAlive(snapshot.pid);
-    if (!["closed", "replaced"].includes(snapshot.status) && (!isTerminalStatus(snapshot.status) || runnerMayBeAlive)) {
-      await this.command(snapshot.agentId, "close");
+    const reviewDecisionRequired = awaitsReviewDecision(snapshot);
+    if (!["closed", "replaced"].includes(snapshot.status) && (reviewDecisionRequired || !isTerminalStatus(snapshot.status) || runnerMayBeAlive)) {
+      await this.command(snapshot.agentId, reviewDecisionRequired ? "dismiss" : "close");
       await waitForStatus(new AgentStateStore(getAgentStateDir(this.parentSessionId, snapshot.agentId, this.agentDir)), "closed", 15_000);
     }
     if (snapshot.worktree) await this.worktrees.remove(parentRepo, snapshot.worktree, discard);
@@ -403,6 +454,7 @@ export class AgentOrchestrator {
       ...(existing.branch ? { branch: existing.branch } : {}),
       ...(existing.baseCommit ? { baseCommit: existing.baseCommit } : {}),
       ...(model ? { model } : {}),
+      ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
       ...(tools ? { tools } : {}),
       ...(existing.systemPrompt ? { systemPrompt: existing.systemPrompt } : {}),
     });
@@ -476,6 +528,7 @@ export class AgentOrchestrator {
 
   private async writeQueuedSnapshot(item: QueuedSpawn): Promise<void> {
     const timestamp = new Date().toISOString();
+    const model = item.input.model ?? item.input.definition?.model;
     const snapshot: AgentSnapshot = {
       protocolVersion: PROTOCOL_VERSION,
       agentId: item.agentId,
@@ -488,6 +541,8 @@ export class AgentOrchestrator {
       ...(item.input.mutating === undefined ? {} : { mutating: item.input.mutating }),
       parentCwd: item.input.cwd,
       ...(item.input.replaces ? { replaces: item.input.replaces } : {}),
+      ...(model ? { model } : {}),
+      ...(item.input.thinkingLevel ? { thinkingLevel: item.input.thinkingLevel } : {}),
       cwd: item.input.cwd,
       startedAt: timestamp,
       updatedAt: timestamp,
@@ -517,12 +572,22 @@ function assertCommandAllowed(snapshot: AgentSnapshot, type: AgentCommandType): 
   if (snapshot.status === "queued" && !["abort", "close"].includes(type)) {
     throw new Error(`${type} requires a launched agent; ${snapshot.agentId} is still queued`);
   }
-  if (snapshot.status === "awaiting_review") {
+  if (awaitsReviewDecision(snapshot)) {
     if (["prompt", "steer", "follow_up", "close"].includes(type)) throw new Error(`Agent ${snapshot.agentId} awaits parent review; use revise, accept, take_over, escalate, or dismiss`);
   } else if (reviewCommands.has(type)) {
     throw new Error(`${type} requires an awaiting_review agent`);
   }
   if (type === "prompt" && snapshot.status !== "idle") throw new Error(`prompt requires an idle agent; ${snapshot.agentId} is ${snapshot.status}`);
+}
+
+function awaitsReviewDecision(snapshot: AgentSnapshot): boolean {
+  if (snapshot.status === "awaiting_review") return true;
+  if (snapshot.status !== "orphaned" || !snapshot.latestResult) return false;
+  return !["accepted", "taken_over", "dismissed"].includes(snapshot.reviewState ?? "pending");
+}
+
+function runnerShouldRecover(snapshot: AgentSnapshot): boolean {
+  return !["creating", "queued", "failed", "closed", "replaced"].includes(snapshot.status);
 }
 
 function normalizeInput(input: SpawnAgentInput): SpawnAgentInput {

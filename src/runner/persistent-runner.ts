@@ -30,6 +30,7 @@ export class PersistentAgentRunner {
   private stopReason: string | undefined;
   private attemptStartedAt: string | undefined;
   private attemptUsageStart: AgentUsage = emptyUsage();
+  private streamingAssistantUsage: AgentUsage = emptyUsage();
   private snapshot: AgentSnapshot;
   private readonly now: () => Date;
   private readonly output: TranscriptWriter;
@@ -67,6 +68,7 @@ export class PersistentAgentRunner {
       ...(job.branch ? { branch: job.branch } : {}),
       ...(job.baseCommit ? { baseCommit: job.baseCommit } : {}),
       ...(job.model ? { model: job.model } : {}),
+      ...(job.thinkingLevel ? { thinkingLevel: job.thinkingLevel } : {}),
     };
   }
 
@@ -76,9 +78,14 @@ export class PersistentAgentRunner {
     await this.store.initialize();
     await this.restoreAcknowledgements();
     if (this.restoredStatus && ["closed", "replaced"].includes(this.restoredStatus)) return;
-    await this.connect();
     const readyStatus = this.restoredStatus === "awaiting_review" ? "awaiting_review" : "idle";
-    await this.setStatus(readyStatus, readyStatus === "awaiting_review" ? "Result awaiting parent review" : "RPC session ready");
+    if (readyStatus === "awaiting_review") {
+      await this.setStatus("awaiting_review", "Result awaiting parent review");
+      await this.replayTerminalCommandWithoutRpc();
+      if (["closed", "replaced"].includes(this.snapshot.status)) return;
+    }
+    await this.connect();
+    if (readyStatus === "idle") await this.setStatus("idle", "RPC session ready");
     this.heartbeatTimer = setInterval(() => void this.heartbeat(), this.options.heartbeatIntervalMs ?? 5_000);
     this.pollTimer = setInterval(() => void this.processCommands(), this.options.commandPollIntervalMs ?? 500);
     await this.processCommands();
@@ -104,6 +111,7 @@ export class PersistentAgentRunner {
       for (const command of records) {
         if (this.acknowledged.has(command.id)) continue;
         await this.processCommand(command);
+        if (["closed", "replaced"].includes(this.snapshot.status)) return;
       }
     } finally {
       this.processing = false;
@@ -115,6 +123,12 @@ export class PersistentAgentRunner {
     this.snapshot = { ...this.snapshot, lastHeartbeatAt: timestamp, updatedAt: timestamp, pid: process.pid,
       ...(this.transport?.pid === undefined ? {} : { rpcPid: this.transport.pid }) };
     await this.emit("heartbeat", { status: this.snapshot.status });
+  }
+
+  private async replayTerminalCommandWithoutRpc(): Promise<void> {
+    const { records } = await this.store.readCommands();
+    const command = records.find((candidate) => !this.acknowledged.has(candidate.id) && ["accept", "take_over", "dismiss", "replace"].includes(candidate.type));
+    if (command) await this.processCommand(command);
   }
 
   async flushEvents(): Promise<void> {
@@ -147,6 +161,16 @@ export class PersistentAgentRunner {
     else await this.setStatus(statusAfterRestart, statusAfterRestart === "awaiting_review" ? "Result still awaiting parent review" : "RPC session restarted");
   }
 
+  private async ensureTransportForRevision(): Promise<void> {
+    if (this.transport) return;
+    try {
+      await this.restartTransport();
+    } catch (error) {
+      if (this.snapshot.status === "starting") await this.setStatus("awaiting_review", "Result still awaiting parent review; RPC reconnect failed");
+      throw error;
+    }
+  }
+
   private async processCommand(command: AgentCommand): Promise<void> {
     try {
       this.recordActivity("command", `${command.type} requested`);
@@ -163,6 +187,7 @@ export class PersistentAgentRunner {
           break;
         case "revise": {
           if (this.snapshot.status !== "awaiting_review") throw new Error("revise requires an awaiting_review agent");
+          await this.ensureTransportForRevision();
           await this.startAttempt(command, true);
           await this.emit("review_decision", { decision: "revision_requested", attemptId: command.id });
           break;
@@ -260,6 +285,7 @@ export class PersistentAgentRunner {
         );
         return;
       case "message_update": {
+        this.applyAssistantUsage(event.usage);
         const update = event.assistantMessageEvent as { type?: string; delta?: string } | undefined;
         if (update?.type === "text_delta" && update.delta) {
           this.assistantText += update.delta;
@@ -269,24 +295,14 @@ export class PersistentAgentRunner {
         return;
       }
       case "message_end": {
-        const message = event.message as { role?: string; content?: unknown; stopReason?: string; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } } } | undefined;
+        const message = event.message as { role?: string; content?: unknown; stopReason?: string; usage?: unknown } | undefined;
         if (message?.role === "assistant") {
           const text = assistantMessageText(message.content);
           if (text) this.assistantText = text;
           this.stopReason = message.stopReason;
-        }
-        if (message?.role === "assistant" && message.usage) {
-          this.snapshot = {
-            ...this.snapshot,
-            usage: {
-              inputTokens: this.snapshot.usage.inputTokens + (message.usage.input ?? 0),
-              outputTokens: this.snapshot.usage.outputTokens + (message.usage.output ?? 0),
-              cacheReadTokens: this.snapshot.usage.cacheReadTokens + (message.usage.cacheRead ?? 0),
-              cacheWriteTokens: this.snapshot.usage.cacheWriteTokens + (message.usage.cacheWrite ?? 0),
-              cost: this.snapshot.usage.cost + (message.usage.cost?.total ?? 0),
-            },
-          };
-          await this.emit("usage_changed", { usage: this.snapshot.usage });
+          this.applyAssistantUsage(message.usage);
+          this.streamingAssistantUsage = emptyUsage();
+          if (message.usage) await this.emit("usage_changed", { usage: this.snapshot.usage });
         }
         return;
       }
@@ -336,7 +352,13 @@ export class PersistentAgentRunner {
       }
       case "transport_closed":
         if (["closed", "replaced"].includes(this.snapshot.status)) return;
-        if (isExecutionStatus(this.snapshot.status) && this.snapshot.attemptId) {
+        this.unsubscribe?.();
+        this.unsubscribe = undefined;
+        this.transport = undefined;
+        this.snapshot = withoutRpcPid(this.snapshot);
+        if (this.snapshot.status === "awaiting_review") {
+          await this.setStatus("awaiting_review", "Result awaiting parent review; RPC process exited");
+        } else if (isExecutionStatus(this.snapshot.status) && this.snapshot.attemptId) {
           await this.persistResult("interrupted", "RPC process exited before the assignment settled");
         } else {
           await this.setStatus("orphaned", "RPC process exited");
@@ -463,6 +485,7 @@ export class PersistentAgentRunner {
       stopReason: this.stopReason,
       attemptStartedAt: this.attemptStartedAt,
       attemptUsageStart: this.attemptUsageStart,
+      streamingAssistantUsage: this.streamingAssistantUsage,
     };
     this.beginAttempt(command, rpcCommand.message as string, revision);
     try {
@@ -473,6 +496,7 @@ export class PersistentAgentRunner {
       this.stopReason = previous.stopReason;
       this.attemptStartedAt = previous.attemptStartedAt;
       this.attemptUsageStart = previous.attemptUsageStart;
+      this.streamingAssistantUsage = previous.streamingAssistantUsage;
       throw error;
     }
   }
@@ -485,6 +509,7 @@ export class PersistentAgentRunner {
     this.stopReason = undefined;
     this.attemptStartedAt = timestamp;
     this.attemptUsageStart = { ...this.snapshot.usage };
+    this.streamingAssistantUsage = emptyUsage();
     this.snapshot = {
       ...this.snapshot,
       task: revision ? (this.snapshot.task ?? task) : task,
@@ -493,6 +518,16 @@ export class PersistentAgentRunner {
       attemptNumber: revision ? (this.snapshot.attemptNumber ?? 1) + 1 : 1,
       ...(revision ? { reviewState: "revision_requested" as const } : {}),
     };
+  }
+
+  private applyAssistantUsage(value: unknown): void {
+    const next = rpcUsage(value);
+    if (!next) return;
+    this.snapshot = {
+      ...this.snapshot,
+      usage: addUsage(this.snapshot.usage, subtractUsage(next, this.streamingAssistantUsage)),
+    };
+    this.streamingAssistantUsage = next;
   }
 
   private async sendRpc(command: RpcCommand): Promise<void> {
@@ -543,6 +578,32 @@ function subtractUsage(total: AgentUsage, start: AgentUsage): AgentUsage {
   };
 }
 
+function addUsage(left: AgentUsage, right: AgentUsage): AgentUsage {
+  return {
+    inputTokens: left.inputTokens + right.inputTokens,
+    outputTokens: left.outputTokens + right.outputTokens,
+    cacheReadTokens: left.cacheReadTokens + right.cacheReadTokens,
+    cacheWriteTokens: left.cacheWriteTokens + right.cacheWriteTokens,
+    cost: left.cost + right.cost,
+  };
+}
+
+function rpcUsage(value: unknown): AgentUsage | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const usage = value as { input?: unknown; output?: unknown; cacheRead?: unknown; cacheWrite?: unknown; cost?: { total?: unknown } };
+  return {
+    inputTokens: finiteNumber(usage.input),
+    outputTokens: finiteNumber(usage.output),
+    cacheReadTokens: finiteNumber(usage.cacheRead),
+    cacheWriteTokens: finiteNumber(usage.cacheWrite),
+    cost: finiteNumber(usage.cost?.total),
+  };
+}
+
+function finiteNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
 function cap(value: string, maximum = 12_000): string {
   return value.length <= maximum ? value : `${value.slice(0, maximum)}\n… result truncated; read resultPath for the complete response …`;
 }
@@ -554,5 +615,10 @@ function withoutCurrentTool(snapshot: AgentSnapshot): AgentSnapshot {
 
 function withoutPendingUiRequest(snapshot: AgentSnapshot): AgentSnapshot {
   const { pendingUiRequest: _pendingUiRequest, ...rest } = snapshot;
+  return rest;
+}
+
+function withoutRpcPid(snapshot: AgentSnapshot): AgentSnapshot {
+  const { rpcPid: _rpcPid, ...rest } = snapshot;
   return rest;
 }

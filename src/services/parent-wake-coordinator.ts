@@ -24,6 +24,10 @@ export class ParentWakeCoordinator {
     this.delivered.clear();
   }
 
+  hasPending(): boolean {
+    return this.pending.size > 0;
+  }
+
   drain(): string[] {
     const pending = [...this.pending.entries()];
     this.pending.clear();

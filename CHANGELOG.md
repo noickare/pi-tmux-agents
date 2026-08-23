@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.6 — 2026-08-23
+
+### Changed
+
+- Require, test, and develop against Pi 0.84.2 while keeping Pi core packages peer-provided as required for extension packages and reporting version drift through `/agents-doctor`
+- Inherit the parent model and thinking level for ad-hoc children unless a role or spawn request explicitly overrides the model
+- Bound model-visible agent list, status, result, finding, and review-packet text while retaining full data in durable results and tool details
+
+### Fixed
+
+- Recreate missing tmux runner windows from durable jobs—even before their first snapshot—when a parent session resumes after a machine reboot
+- Replay terminal review decisions before reconnecting child RPC, lazily reconnect revisions, keep settled results reviewable when RPC exits, and dismiss parked results through close-and-clean
+- Make stale runner-lock takeover atomic and boot-aware so reboot PID reuse or concurrent recovery cannot create two active state writers
+- Preserve Pi 0.84 cumulative streaming usage for interrupted attempts without double-counting finalized assistant usage
+- Stop processing command batches after terminal review decisions, reject tmux attachment outside TUI mode, and release runner locks reliably during signal shutdown
+- Exclude parked and attention-only agents from periodic execution-review wakeups, and serialize parent wake dispatch through prompt startup
+
 ## 0.3.5 — 2026-08-19
 
 ### Fixed

@@ -20,6 +20,7 @@ export type AgentStatus =
 
 export type AgentPriority = "interactive" | "merge-critical" | "normal" | "speculative";
 export type AgentWeight = "light" | "normal" | "heavy";
+export type AgentThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type AgentReviewState = "pending" | "revision_requested" | "accepted" | "taken_over" | "escalated" | "dismissed";
 
 export interface AgentResultSummary {
@@ -142,6 +143,7 @@ export interface AgentSnapshot {
   baseCommit?: string;
   tmuxTarget?: string;
   model?: string;
+  thinkingLevel?: AgentThinkingLevel;
   pid?: number;
   rpcPid?: number;
   sessionFile?: string;

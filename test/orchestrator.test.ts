@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getAgentStateDir } from "../src/core/paths.js";
 import { AgentRegistry } from "../src/core/registry.js";
+import { AgentStateStore } from "../src/core/state-store.js";
 import type { CommandRunner } from "../src/services/command-runner.js";
 import { AgentOrchestrator } from "../src/services/orchestrator.js";
 import { RunnerLauncher } from "../src/services/runner-launcher.js";
@@ -48,6 +49,89 @@ describe("AgentOrchestrator", () => {
     await expect(orchestrator.command("review-1", "revise", "Correct the test")).resolves.toEqual(expect.any(String));
     const commands = await readFile(join(getAgentStateDir("parent-review", "review-1", agentDir), "commands.jsonl"), "utf8");
     expect(commands).toContain('"type":"revise"');
+
+    registry.upsert(snapshot({
+      agentId: "orphan-review", status: "orphaned", reviewState: "pending", currentTool: undefined,
+      latestResult: {
+        resultId: "attempt-1", outcome: "completed", assignmentId: "assignment-1", attemptId: "attempt-1",
+        attemptNumber: 1, completedAt: "2026-07-23T10:02:00.000Z", finalResponse: "Done",
+        resultPath: "/state/assignments/assignment-1/attempts/attempt-1/result.json",
+      },
+    }));
+    await expect(orchestrator.command("orphan-review", "dismiss")).resolves.toEqual(expect.any(String));
+    const orphanCommands = await readFile(join(getAgentStateDir("parent-review", "orphan-review", agentDir), "commands.jsonl"), "utf8");
+    expect(orphanCommands).toContain('"type":"dismiss"');
+  });
+
+  it("does not persist a command when missing-runner recovery fails", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-orchestrator-command-recovery-"));
+    dirs.push(agentDir);
+    const registry = new AgentRegistry();
+    registry.upsert(snapshot({
+      agentId: "missing-runner", status: "idle", currentTool: undefined, pid: 999_999,
+      tmuxTarget: "pi-agents-parent-command-recovery:missing-runner",
+    }));
+    const run = vi.fn<CommandRunner>().mockResolvedValue({ stdout: "", stderr: "", code: 1 });
+    const orchestrator = new AgentOrchestrator("parent-command-recovery", agentDir, registry, new RunnerLauncher(new TmuxService(run)), new WorktreeService(run));
+
+    await expect(orchestrator.command("missing-runner", "steer", "Do not duplicate this")).rejects.toThrow();
+    await expect(access(join(getAgentStateDir("parent-command-recovery", "missing-runner", agentDir), "commands.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("recreates a missing runner from its durable job before the first snapshot", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-orchestrator-recover-"));
+    dirs.push(agentDir);
+    let sessionExists = false;
+    const windows = new Set<string>();
+    const run = vi.fn<CommandRunner>().mockImplementation(async (_command, args) => {
+      if (args[0] === "has-session") return { stdout: "", stderr: "", code: sessionExists ? 0 : 1 };
+      if (args[0] === "list-windows") {
+        const session = String(args[2]);
+        const stdout = [...windows].map((window, index) => `${session}\t${index}\t${window}\t1\t0\t1234`).join("\n");
+        return { stdout: stdout ? `${stdout}\n` : "", stderr: "", code: 0 };
+      }
+      if (args[0] === "new-session") {
+        sessionExists = true;
+        windows.add(String(args[5]));
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (args[0] === "new-window") {
+        windows.add(String(args[5]));
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return { stdout: "", stderr: "", code: 0 };
+    });
+    const registry = new AgentRegistry();
+    const orchestrator = new AgentOrchestrator("parent-recover", agentDir, registry, new RunnerLauncher(new TmuxService(run)), new WorktreeService(run));
+    const launched = await orchestrator.spawn({ name: "Worker", task: "Long task", cwd: agentDir, mutating: false });
+    expect(registry.get(launched.agentId)).toBeUndefined();
+    await expect(access(join(getAgentStateDir("parent-recover", launched.agentId, agentDir), "snapshot.json"))).rejects.toMatchObject({ code: "ENOENT" });
+
+    sessionExists = false;
+    windows.clear();
+    await expect(orchestrator.recoverRunners()).resolves.toEqual({ recovered: [launched.agentId], failed: [] });
+    expect(run.mock.calls.filter((call) => call[1][0] === "new-session")).toHaveLength(2);
+  });
+
+  it("dismisses a parked result when close-and-clean is requested", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-orchestrator-dismiss-review-"));
+    dirs.push(agentDir);
+    const registry = new AgentRegistry();
+    const parked = snapshot({ agentId: "review-1", status: "awaiting_review", reviewState: "pending", currentTool: undefined });
+    registry.upsert(parked);
+    const store = new AgentStateStore(getAgentStateDir("parent-dismiss", parked.agentId, agentDir));
+    await store.writeSnapshot(parked);
+    const run = vi.fn<CommandRunner>().mockResolvedValue({ stdout: "", stderr: "", code: 0 });
+    const orchestrator = new AgentOrchestrator("parent-dismiss", agentDir, registry, new RunnerLauncher(new TmuxService(run)), new WorktreeService(run));
+    const command = vi.spyOn(orchestrator, "command").mockImplementation(async (_agentId, type) => {
+      expect(type).toBe("dismiss");
+      await store.writeSnapshot({ ...parked, status: "closed", reviewState: "dismissed", statusReason: "Dismissed by parent" });
+      return "dismiss-command";
+    });
+
+    await expect(orchestrator.closeAndClean(parked.agentId, agentDir)).resolves.toBeUndefined();
+    expect(command).toHaveBeenCalledWith(parked.agentId, "dismiss");
+    expect(registry.get(parked.agentId)).toBeUndefined();
   });
 
   it("replaces an orphaned agent while preserving its worktree and branch", async () => {

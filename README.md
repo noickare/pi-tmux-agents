@@ -29,7 +29,7 @@ Persistent, steerable, tmux-backed subagents for [pi](https://github.com/earendi
 - Node.js 22.19 or newer
 - Git
 - tmux 3.2 or newer; tmux 3.5+ recommended
-- pi 0.81.1 or compatible
+- pi 0.84.2 or newer
 
 Recommended `~/.tmux.conf` for reliable modified keys:
 
@@ -115,7 +115,7 @@ model: anthropic/claude-sonnet-4-5
 Review the requested change. Be specific and do not modify files.
 ```
 
-Project agents are ignored unless the project is trusted and project approval is explicitly enabled for the child.
+Project agents are ignored unless the project is trusted and project approval is explicitly enabled for the child. Ad-hoc children inherit the active parent model and thinking level. A role or spawn-level model overrides that inheritance; use Pi's `provider/model:thinking` shorthand when the override should pin a thinking level too.
 
 ## Configuration
 
@@ -156,7 +156,7 @@ Runtime state is stored under:
 ~/.pi/agent/subagents/<parent-session-id>/<agent-id>/
 ```
 
-Each child has an isolated pi session, command/event logs, an atomic snapshot, transcript, runner lock, and versioned results under `assignments/<assignment-id>/attempts/<attempt-id>/result.json`. Tmux children continue when the parent reloads or restarts; the extension reconnects by scanning these snapshots and redelivers pending review results.
+Each child has an isolated pi session, command/event logs, an atomic snapshot, transcript, runner lock, and versioned results under `assignments/<assignment-id>/attempts/<attempt-id>/result.json`. Tmux children continue when the parent reloads or restarts. After a machine reboot removes the tmux server, resuming the parent session recreates missing runner windows from their durable jobs, replays pending commands, and redelivers pending review results.
 
 Version 0.3.0 introduces protocol v2 as a clean break. Protocol-v1 runtime state is ignored rather than migrated; finish or archive old children before upgrading.
 

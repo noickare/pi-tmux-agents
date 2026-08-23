@@ -78,9 +78,13 @@ describe("PersistentAgentRunner", () => {
 
     transport.emit({ type: "agent_start" });
     transport.emit({ type: "tool_execution_start", toolName: "read", args: { path: "src/index.ts" } });
-    transport.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Working" } });
+    transport.emit({
+      type: "message_update",
+      usage: { input: 90, output: 5, cacheRead: 10, cacheWrite: 0, cost: { total: 0.004 } },
+      assistantMessageEvent: { type: "text_delta", delta: "Working" },
+    });
     transport.emit({ type: "tool_execution_end", toolName: "read", isError: false });
-    transport.emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Implemented it and ran the targeted test." }], stopReason: "stop", usage: { input: 100, output: 20, cost: { total: 0.01 } } } });
+    transport.emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Implemented it and ran the targeted test." }], stopReason: "stop", usage: { input: 100, output: 20, cacheRead: 10, cacheWrite: 0, cost: { total: 0.01 } } } });
     transport.emit({ type: "agent_settled" });
     await runner.flushEvents();
 
@@ -91,7 +95,7 @@ describe("PersistentAgentRunner", () => {
       lastSequence: 8,
       tmuxTarget: job.tmuxTarget,
       rpcPid: 4242,
-      usage: { inputTokens: 100, outputTokens: 20, cost: 0.01 },
+      usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 10, cost: 0.01 },
     });
     expect(transcript).toContain("→ read");
     expect(transcript).toContain("Working");
@@ -121,14 +125,71 @@ describe("PersistentAgentRunner", () => {
     transport.emit({ type: "agent_settled" });
     await runner.flushEvents();
     await store.appendCommand(createCommand({ id: "accept-1", agentId: job.agentId, type: "accept" }));
+    await store.appendCommand(createCommand({ id: "restart-after-accept", agentId: job.agentId, type: "restart" }));
     await runner.processCommands();
     expect(runner.currentSnapshot).toMatchObject({ status: "closed", reviewState: "accepted" });
+    expect((await store.readEvents()).records.some((event) => event.commandId === "restart-after-accept")).toBe(false);
     const decisionEvents = (await store.readEvents()).records.filter((event) => event.commandId === "accept-1" || event.type === "status_changed");
     const closedIndex = decisionEvents.findIndex((event) => event.type === "status_changed" && event.payload?.status === "closed");
     const acknowledgementIndex = decisionEvents.findIndex((event) => event.type === "command_acknowledged" && event.commandId === "accept-1");
     expect(closedIndex).toBeGreaterThanOrEqual(0);
     expect(acknowledgementIndex).toBeGreaterThan(closedIndex);
     expect(transport.closed).toBe(true);
+  });
+
+  it("replays a terminal review decision after restart without starting RPC", async () => {
+    const { store, job } = await setup();
+    await store.appendCommand(createCommand({ id: "prompt-before-restart", agentId: job.agentId, type: "prompt", payload: { message: "Finish it" } }));
+    const firstTransport = new FakeTransport();
+    const first = new PersistentAgentRunner(job, store, async () => firstTransport, { heartbeatIntervalMs: 60_000, commandPollIntervalMs: 60_000, output: { write() {} } });
+    await first.start();
+    firstTransport.emit({ type: "agent_start" });
+    firstTransport.emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Done" }], stopReason: "stop" } });
+    firstTransport.emit({ type: "agent_settled" });
+    await first.flushEvents();
+    await first.stop();
+
+    await store.appendCommand(createCommand({ id: "stale-restart", agentId: job.agentId, type: "restart" }));
+    await store.appendCommand(createCommand({ id: "take-over-after-reboot", agentId: job.agentId, type: "take_over" }));
+    let transportStarts = 0;
+    const second = new PersistentAgentRunner(job, store, async () => {
+      transportStarts++;
+      throw new Error("RPC must not start for a terminal review decision");
+    }, { heartbeatIntervalMs: 60_000, commandPollIntervalMs: 60_000, output: { write() {} } });
+    await second.start();
+
+    expect(transportStarts).toBe(0);
+    expect(second.currentSnapshot).toMatchObject({ status: "closed", reviewState: "taken_over" });
+    expect((await store.readEvents()).records.at(-1)).toMatchObject({
+      type: "command_acknowledged", commandId: "take-over-after-reboot", payload: { success: true },
+    });
+  });
+
+  it("keeps a settled result revisable when its RPC process exits", async () => {
+    const { store, job } = await setup();
+    await store.appendCommand(createCommand({ id: "prompt-before-exit", agentId: job.agentId, type: "prompt", payload: { message: "Finish it" } }));
+    const first = new FakeTransport();
+    const second = new FakeTransport();
+    const transports = [first, second];
+    const runner = new PersistentAgentRunner(job, store, async () => transports.shift()!, { heartbeatIntervalMs: 60_000, commandPollIntervalMs: 60_000, output: { write() {} } });
+    await runner.start();
+    first.emit({ type: "agent_start" });
+    first.emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Done" }], stopReason: "stop" } });
+    first.emit({ type: "agent_settled" });
+    await runner.flushEvents();
+
+    first.emit({ type: "transport_closed" });
+    await runner.flushEvents();
+    expect(runner.currentSnapshot).toMatchObject({
+      status: "awaiting_review", reviewState: "pending", statusReason: "Result awaiting parent review; RPC process exited",
+    });
+    expect(runner.currentSnapshot.rpcPid).toBeUndefined();
+
+    await store.appendCommand(createCommand({ id: "revise-after-exit", agentId: job.agentId, type: "revise", payload: { message: "Add the missing test" } }));
+    await runner.processCommands();
+    expect(second.commands).toContainEqual({ id: "revise-after-exit", type: "prompt", message: "Add the missing test" });
+    expect(runner.currentSnapshot).toMatchObject({ status: "awaiting_review", reviewState: "revision_requested", attemptNumber: 2 });
+    await runner.stop();
   });
 
   it("starts a revision attempt in the same assignment", async () => {
@@ -161,7 +222,11 @@ describe("PersistentAgentRunner", () => {
     const first = new PersistentAgentRunner(job, store, async () => firstTransport, { heartbeatIntervalMs: 60_000, commandPollIntervalMs: 60_000, output: { write() {} } });
     await first.start();
     firstTransport.emit({ type: "agent_start" });
-    firstTransport.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Partial work" } });
+    firstTransport.emit({
+      type: "message_update",
+      usage: { input: 120, output: 8, cacheRead: 40, cacheWrite: 3, cost: { total: 0.02 } },
+      assistantMessageEvent: { type: "text_delta", delta: "Partial work" },
+    });
     await first.flushEvents();
     await first.stop();
 
@@ -170,7 +235,11 @@ describe("PersistentAgentRunner", () => {
     await second.start();
     expect(second.currentSnapshot).toMatchObject({ status: "awaiting_review", reviewState: "pending" });
     const result = await store.readResult("interrupted-assignment", "interrupted-assignment");
-    expect(result).toMatchObject({ outcome: "interrupted", error: expect.stringContaining("Runner restarted") });
+    expect(result).toMatchObject({
+      outcome: "interrupted",
+      error: expect.stringContaining("Runner restarted"),
+      usage: { inputTokens: 120, outputTokens: 8, cacheReadTokens: 40, cacheWriteTokens: 3, cost: 0.02 },
+    });
     await second.stop();
   });
 
