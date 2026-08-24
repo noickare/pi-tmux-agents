@@ -1,76 +1,67 @@
-# Safe updates
+# Updating and rollback
 
-Pi and `pi-tmux-agents` are updated separately on purpose. Production installs should use a reviewed extension tag so a Pi self-update cannot also move extension code.
+Pi and `pi-tmux-agents` are updated separately on purpose. Keep the extension pinned to a reviewed tag so a Pi self-update cannot also change extension code.
 
-## Update an installed environment
+## Before updating
 
-1. Record the working versions and package pin:
+1. Let active children settle, review their results, and preserve any dirty worktrees.
+2. Record the working Pi version and installed package source:
 
    ```bash
    pi --version
    pi list
    ```
 
-2. Review the [Pi changelog](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/CHANGELOG.md), then update Pi by itself:
+3. Read this project's [changelog](../CHANGELOG.md) for minimum Pi versions, protocol changes, and required user action.
+4. Read the [Pi changelog](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/CHANGELOG.md).
 
-   ```bash
-   pi update --self
-   pi --version
-   ```
+Durable state is not migrated between incompatible protocol generations. Finish or archive important work before crossing a documented protocol boundary.
 
-3. Start Pi normally and run `/agents-doctor`. Do not move the extension pin until a compatible `pi-tmux-agents` release is available.
+## Update Pi first
 
-4. Move to that reviewed tag explicitly and restart Pi:
+Update Pi independently:
 
-   ```bash
-   pi install git:github.com/noickare/pi-tmux-agents@v<verified-version>
-   ```
+```bash
+pi update --self
+pi --version
+```
 
-5. Run `/agents-doctor` again and exercise one read-only child before starting mutating work.
+Start Pi with the currently pinned extension and run:
 
-A pinned Git source is not advanced by `pi update --extensions` or `pi update --all`; those commands only reconcile its checkout to the configured ref. Move a pinned package with `pi install ...@<new-ref>`. Unpinned npm and Git packages do advance during package updates, which is less suitable when controlled rollout and simple rollback matter.
+```text
+/agents-doctor
+```
 
-To roll back the extension, restore the previous known-good tag and restart Pi:
+Do not move the extension pin until a compatible `pi-tmux-agents` release is available. Compatibility requirements are recorded in each release's changelog entry and the README requirements table.
+
+## Update the extension
+
+Move to a reviewed release tag explicitly, then restart Pi:
+
+```bash
+pi install git:github.com/noickare/pi-tmux-agents@v<version>
+```
+
+Run `/agents-doctor` again. Before starting mutating work, create one read-only child and confirm that it starts, returns a result, and reaches parent review.
+
+Pinned Git refs do not advance during `pi update --extensions` or `pi update --all`. Those commands reconcile the checkout to the configured ref. Moving a pinned package requires another `pi install ...@<new-ref>` command. This behavior makes rollout and rollback explicit.
+
+## Roll back
+
+Install the previous known-good tag and restart Pi:
 
 ```bash
 pi install git:github.com/noickare/pi-tmux-agents@v<previous-version>
 ```
 
-Use `pi -ne` if a newly updated extension prevents normal startup, then restore the previous pin. Existing tmux-agent durable state is not migrated across incompatible protocol versions; check the release notes before moving between protocol generations.
+If the updated extension prevents normal startup, start Pi without extensions:
 
-## Prepare a compatible release
+```bash
+pi -ne
+```
 
-The repository keeps Pi runtime packages in `peerDependencies` with `"*"`, as required for Pi packages, and pins exact coordinated versions in `devDependencies` for reproducible compatibility checks. Never bundle a private copy of Pi core packages or `typebox`.
+Then restore the previous pin or fix the configuration error. Do not delete durable state or worktrees as a first troubleshooting step.
 
-For a new Pi release:
+## Maintainers
 
-1. Read its complete changelog and migration notes.
-2. Update all host packages together, using the `typebox` version required by that Pi release:
-
-   ```bash
-   PI_VERSION=<version>
-   TYPEBOX_VERSION="$(npm view "@earendil-works/pi-coding-agent@${PI_VERSION}" dependencies.typebox)"
-   npm install --save-dev --save-exact \
-     "@earendil-works/pi-ai@${PI_VERSION}" \
-     "@earendil-works/pi-coding-agent@${PI_VERSION}" \
-     "@earendil-works/pi-tui@${PI_VERSION}" \
-     "typebox@${TYPEBOX_VERSION}"
-   ```
-
-3. Update the minimum checked by `src/services/doctor.ts`, the requirements in `README.md`, the package version, and `CHANGELOG.md`.
-4. Run the full compatibility gate:
-
-   ```bash
-   npm ci
-   npm run validate
-   npm run smoke:runner
-   npm run smoke:extension
-   npm run pack:check
-   npm audit --omit=dev
-   ```
-
-5. Review the diff, publish a new immutable Git tag, and only then instruct users to move their pin.
-
-Dependabot groups the three Pi host packages into one pull request. The weekly and manually dispatched `pi-latest` CI job also installs the latest coordinated Pi packages plus Pi's exact `typebox` dependency and runs the full validation/smoke gate. These checks detect compatibility drift but never update an installed user's pinned extension automatically.
-
-Upstream package behavior and peer-dependency guidance are documented in [Pi Packages](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md).
+The compatibility and publication procedure is documented separately in [Releasing](RELEASING.md).

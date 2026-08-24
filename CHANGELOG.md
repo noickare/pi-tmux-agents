@@ -1,5 +1,13 @@
 # Changelog
 
+All notable user-visible changes are documented here. Releases use semantic versioning; while the project is pre-1.0, minor releases may include intentional breaking changes called out below.
+
+## Unreleased
+
+### Changed
+
+- Reorganize the README and public documentation around quick start, usage, configuration, architecture, troubleshooting, safe updates, contribution, security, and release workflows
+
 ## 0.3.7 — 2026-08-24
 
 ### Added

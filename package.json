@@ -24,6 +24,8 @@
     "AGENTS.md",
     "README.md",
     "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
     "docs"
   ],
   "scripts": {

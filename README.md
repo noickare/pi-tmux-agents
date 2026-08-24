@@ -1,184 +1,141 @@
 # pi-tmux-agents
 
-Persistent, steerable, tmux-backed subagents for [pi](https://github.com/earendil-works/pi-mono), with isolated Git worktrees, autonomous parent orchestration, resource-aware scheduling, watchdog supervision, and a responsive terminal UI.
+[![CI](https://github.com/noickare/pi-tmux-agents/actions/workflows/ci.yml/badge.svg)](https://github.com/noickare/pi-tmux-agents/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/noickare/pi-tmux-agents)](https://github.com/noickare/pi-tmux-agents/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> **Status:** Public, production-oriented v0.3.7 release. See the [approved PRD](docs/PRD.md).
+Run persistent, steerable [Pi](https://github.com/earendil-works/pi) coding agents in tmux. Each child gets an inspectable session, mutating work can be isolated in a Git worktree, and the parent Pi session supervises results and failures.
 
-## Features
+`pi-tmux-agents` is useful when one task can be split into independent research, implementation, test, or review tracks without losing visibility or control.
 
-- Persistent pi RPC sessions in readable tmux windows
-- Durable assignment attempts and captured final child results
-- Automatic result delivery to the parent agent for mandatory autonomous review
-- Explicit revision, acceptance, takeover, dismissal, and human-escalation decisions
-- Immediate steering and queued follow-ups while work is active
-- Dedicated Git worktrees and branches for mutating agents
-- Priority- and resource-aware durable admission queue without a fixed agent limit
-- Critical-pressure auto-pause and recovery with parent resource reservations
-- Heartbeat, process, progress, tmux, worktree, resource, queue, retry, tool-failure, and extension-UI supervision
-- Staged diagnostic steering, restart, and worktree-preserving replacement
-- Five-minute supervision of active execution and configurable ready-session expiry
-- Coalesced parent wakeups for results and current attention states
-- Restart-safe command acknowledgement, replay, locks, and snapshots
-- Responsive, keyboard-first pi dashboard and compact progress widget
-- User and trusted project Markdown agent definitions
-- Guided setup and diagnostics without silent system changes
+## Highlights
 
-## Requirements
+- **Persistent sessions:** child agents continue in tmux while the parent is busy or reloading.
+- **Safe parallel edits:** mutating children work on dedicated `agent/*` branches in sibling Git worktrees.
+- **Active supervision:** a watchdog checks heartbeats, progress, processes, tmux, resources, queues, and worktrees.
+- **Resource-aware scheduling:** work is queued or paused when CPU, memory, disk, or provider pressure is too high.
+- **Explicit review:** every settled result returns to the parent for acceptance, revision, takeover, dismissal, or escalation.
+- **Terminal-first UI:** `/agents` opens a responsive dashboard; every child can also be inspected directly in tmux.
 
-- macOS, Linux, or WSL
-- Node.js 22.19 or newer
-- Git
-- tmux 3.2 or newer; tmux 3.5+ recommended
-- pi 0.84.3 or newer
+## Quick start
 
-Recommended `~/.tmux.conf` for reliable modified keys:
+### 1. Check the prerequisites
+
+| Requirement | Minimum |
+| --- | --- |
+| Operating system | macOS, Linux, or Windows through WSL |
+| Node.js | 22.19 |
+| Git | 2.20 |
+| tmux | 3.2; 3.5+ recommended |
+| Pi | 0.84.3 |
+
+For reliable modified keys, add this to `~/.tmux.conf`:
 
 ```tmux
 set -g extended-keys on
 set -g extended-keys-format csi-u
 ```
 
-Restart the tmux server after changing this configuration. On tmux 3.2–3.4, omit `extended-keys-format csi-u`.
+`extended-keys-format csi-u` requires tmux 3.5+. On tmux 3.2–3.4, use only `set -g extended-keys on`. Restart the tmux server after changing the file.
 
-## Installation
+### 2. Install a reviewed release
 
-Install a reviewed release directly from GitHub:
+Pi packages run with your user permissions. Review the source before installing it.
 
 ```bash
 pi install git:github.com/noickare/pi-tmux-agents@v0.3.7
 ```
 
-The tag keeps production installs from moving until a newer release has passed compatibility checks. See [Safe updates](docs/UPDATING.md) for the Pi-first update sequence, validation, and rollback commands.
+The version tag is intentionally pinned. See [Updating](docs/UPDATING.md) before moving to another release.
 
-For development:
+### 3. Verify the installation
 
-```bash
-git clone https://github.com/noickare/pi-tmux-agents.git
-cd pi-tmux-agents
-npm install
-pi -e ./src/extension/index.ts
+Start Pi inside a Git repository and run:
+
+```text
+/agents-doctor
 ```
 
-Run `/agents-doctor` after installation. `/agents-setup` provides guidance but never invokes `sudo`, installs packages, or edits configuration itself.
+The doctor checks required versions, tmux options, private state storage, resource probes, and Git worktree support. `/agents-setup` shows non-destructive setup guidance; it never runs `sudo`, installs packages, or edits configuration.
 
-## Usage
+### 4. Delegate a first task
 
 Ask the parent naturally:
 
 ```text
-Create a scout to inspect authentication and a worker to fix the failing tests.
-Steer the worker to focus on integration tests.
-Check whether any children are stuck.
-Review every returned result, request revisions when needed, and decide how accepted work enters the final deliverable.
+Create a read-only child to map this repository's test structure. Review its result and summarize the important parts.
 ```
 
-The parent uses the `tmux_agent` tool. A settled child enters `awaiting_review`; the parent must inspect its result and workspace, then call `accept`, `revise`, `take_over`, `dismiss`, or `escalate`. Human input is only required when the parent explicitly escalates.
-
-Direct commands are also available:
+For a mutating task:
 
 ```text
-/agents                         Open the dashboard
-/agents new <task>              Start an ad-hoc mutating worker
-/agents check                   Run the watchdog immediately
-/agents doctor                  Verify dependencies and tmux configuration
-/agents setup                   Show non-destructive setup guidance
-/agents attach <id>             Open the agent's tmux window
-/agents steer <id> <message>    Steer a running agent
-/agents follow-up <id> <message> Queue a follow-up
-/agents replace <id> [reason]    Replace with worktree/context handoff
-/agents diff <id>                Inspect changes from the base commit
-/agents validate <id> <argv...>  Run argv-safe validation in the agent cwd
-/agents clean [--discard]        Clean terminal-agent worktrees
-/agents-doctor                  Alias for /agents doctor
-/agents-setup                   Alias for /agents setup
+Create a worker to fix the failing tests in an isolated worktree. Validate its changes, review the result, and tell me what should be merged.
 ```
 
-Dashboard keys:
+The parent uses the `tmux_agent` tool. You can monitor work with `/agents`; completed work is delivered back to the parent automatically.
+
+## How it works
 
 ```text
-↑↓ or j/k  navigate       Enter  details     Tab  cycle views
-s          steer          f      follow-up   p    pause/resume
-r          restart/replace o      open tmux   c    check now
-x          abort          d      close       Esc  back/close
+Parent Pi session
+├── tmux_agent tool and /agents dashboard
+├── scheduler and watchdog
+└── tmux session
+    ├── read-only child → project directory
+    └── mutating child  → ../.worktrees/<agent-id> on agent/<agent-id>
 ```
 
-## Agent definitions
+A child result does not merge itself. The parent reviews the result and workspace, records a decision, validates changes when appropriate, and decides whether to merge, take over, or discard the work.
 
-User agents live in `~/.pi/agent/agents/*.md`. Trusted project agents may live in `.pi/agents/*.md`.
-
-```markdown
----
-name: reviewer
-description: Reviews code and reports actionable findings
-tools: read, grep, find, ls, bash
-model: anthropic/claude-sonnet-4-5
----
-
-Review the requested change. Be specific and do not modify files.
-```
-
-Project agents are ignored unless the project is trusted and project approval is explicitly enabled for the child. Ad-hoc children inherit the active parent model and thinking level. A role or spawn-level model overrides that inheritance; use Pi's `provider/model:thinking` shorthand when the override should pin a thinking level too.
-
-## Configuration
-
-Global configuration: `~/.pi/agent/tmux-agents.json`
-
-Trusted project override: `.pi/tmux-agents.json`
-
-```json
-{
-  "monitorIntervalMs": 1000,
-  "watchdogIntervalMs": 30000,
-  "heartbeatStaleMs": 30000,
-  "progressStaleMs": 600000,
-  "parentReviewIntervalMs": 300000,
-  "schedulerIntervalMs": 5000,
-  "idleTimeoutMs": 14400000,
-  "parentReservedCpu": 1,
-  "parentReservedMemoryBytes": 1073741824,
-  "minimumFreeMemoryBytes": 2147483648,
-  "criticalFreeMemoryBytes": 536870912,
-  "minimumFreeDiskBytes": 5368709120,
-  "maximumLoadPerAvailableCpu": 1.25,
-  "autoPauseOnCritical": true,
-  "autoRemediateStuck": true,
-  "remediationGraceMs": 120000,
-  "resourceRecoveryStableMs": 30000,
-  "queueStaleMs": 1800000,
-  "uiRequestStaleMs": 60000,
-  "animationEnabled": true
-}
-```
-
-## State and recovery
-
-Runtime state is stored under:
+Runtime state is local to the parent Pi session and stored under:
 
 ```text
-~/.pi/agent/subagents/<parent-session-id>/<agent-id>/
+~/.pi/agent/subagents/<parent-session-id>/
 ```
 
-Each child has an isolated pi session, command/event logs, an atomic snapshot, transcript, runner lock, and versioned results under `assignments/<assignment-id>/attempts/<attempt-id>/result.json`. Tmux children continue when the parent reloads or restarts. After a machine reboot removes the tmux server, resuming the parent session recreates missing runner windows from their durable jobs, replays pending commands, and redelivers pending review results.
+Transcripts and results can contain repository content or secrets printed by tools. Treat this directory as sensitive.
 
-Version 0.3.0 introduces protocol v2 as a clean break. Protocol-v1 runtime state is ignored rather than migrated; finish or archive old children before upgrading.
+## Common commands
+
+| Command | Purpose |
+| --- | --- |
+| `/agents` | Open the dashboard |
+| `/agents new <task>` | Start an ad-hoc mutating child |
+| `/agents check` | Run the watchdog now |
+| `/agents attach <id>` | Open a child's tmux window |
+| `/agents steer <id> <message>` | Correct active work immediately |
+| `/agents follow-up <id> <message>` | Queue work until the child finishes its current work |
+| `/agents diff <id>` | Inspect changes from the child's base commit |
+| `/agents validate <id> <executable> [args...]` | Run a command in the child workspace |
+| `/agents clean [--discard]` | Remove terminal children and eligible worktrees |
+| `/agents-doctor` | Check dependencies and configuration |
+
+See [Usage](docs/USAGE.md) for lifecycle decisions, all direct commands, dashboard keys, and custom agent definitions.
+
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [Usage and workflows](docs/USAGE.md)
+- [Configuration reference](docs/CONFIGURATION.md)
+- [Troubleshooting and cleanup](docs/TROUBLESHOOTING.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Updating and rollback](docs/UPDATING.md)
+- [Changelog](CHANGELOG.md)
+
+## Project status
+
+The current release is v0.3.7. The project is usable for production-oriented local workflows, but it remains pre-1.0: release notes may announce intentional protocol or configuration breaks. Pin releases and read the [changelog](CHANGELOG.md) before updating.
 
 ## Security
 
-Pi extensions run with your system permissions. Review extension and agent-definition source before use. This project avoids shell interpolation, gates project prompts on trust, disables recursive child extensions, uses private state files, and does not silently modify system configuration or remote Git state. See [SECURITY.md](SECURITY.md).
+Pi extensions execute with your system permissions. This project avoids shell interpolation, requires trust before using project-local definitions or configuration, disables recursive child extension discovery, and does not silently push Git remotes or modify system configuration.
 
-## Development
+Read the [security policy](SECURITY.md) before reporting a vulnerability. Do not include sensitive transcripts in public issues.
 
-```bash
-npm ci
-npm run validate
-npm run tui:fixtures
-npm run smoke:runner
-npm run smoke:extension
-npm run pack:check
-```
+## Contributing and support
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution requirements.
+Bug reports, focused feature proposals, documentation fixes, and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md). For usage problems, check [Troubleshooting](docs/TROUBLESHOOTING.md), then search or open a [GitHub issue](https://github.com/noickare/pi-tmux-agents/issues).
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) © Ian Likono and pi-tmux-agents contributors.
