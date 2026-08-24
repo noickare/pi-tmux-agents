@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.7 — 2026-08-24
+
+### Added
+
+- Add a host-version consistency check, grouped Pi dependency updates, and a scheduled latest-Pi compatibility job before releases are advanced
+- Document staged Pi and extension updates, explicit tag movement, validation, and rollback
+
+### Changed
+
+- Require Pi 0.84.3 and develop against exact, synchronized Pi 0.84.3 host packages while keeping runtime core packages peer-provided
+
 ## 0.3.6 — 2026-08-23
 
 ### Changed

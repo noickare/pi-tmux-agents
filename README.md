@@ -2,7 +2,7 @@
 
 Persistent, steerable, tmux-backed subagents for [pi](https://github.com/earendil-works/pi-mono), with isolated Git worktrees, autonomous parent orchestration, resource-aware scheduling, watchdog supervision, and a responsive terminal UI.
 
-> **Status:** Public, production-oriented v0.3.5 release. See the [approved PRD](docs/PRD.md).
+> **Status:** Public, production-oriented v0.3.7 release. See the [approved PRD](docs/PRD.md).
 
 ## Features
 
@@ -29,7 +29,7 @@ Persistent, steerable, tmux-backed subagents for [pi](https://github.com/earendi
 - Node.js 22.19 or newer
 - Git
 - tmux 3.2 or newer; tmux 3.5+ recommended
-- pi 0.84.2 or newer
+- pi 0.84.3 or newer
 
 Recommended `~/.tmux.conf` for reliable modified keys:
 
@@ -42,11 +42,13 @@ Restart the tmux server after changing this configuration. On tmux 3.2–3.4, om
 
 ## Installation
 
-Install directly from GitHub:
+Install a reviewed release directly from GitHub:
 
 ```bash
-pi install git:github.com/noickare/pi-tmux-agents
+pi install git:github.com/noickare/pi-tmux-agents@v0.3.7
 ```
+
+The tag keeps production installs from moving until a newer release has passed compatibility checks. See [Safe updates](docs/UPDATING.md) for the Pi-first update sequence, validation, and rollback commands.
 
 For development:
 

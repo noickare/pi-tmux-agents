@@ -18,7 +18,7 @@ export class AgentsDoctor {
     const checks: DoctorCheck[] = [];
     checks.push(await this.version("tmux", ["-V"], "tmux", [3, 2, 0], installTmuxCommand()));
     checks.push(await this.version("git", ["--version"], "git", [2, 20, 0], "Install Git 2.20 or newer using your system package manager."));
-    checks.push(await this.version("pi", ["--version"], "pi", [0, 84, 2], "Run `pi update --self` to install Pi 0.84.2 or newer."));
+    checks.push(await this.version("pi", ["--version"], "pi", [0, 84, 3], "Run `pi update --self` to install Pi 0.84.3 or newer."));
     checks.push(nodeVersionCheck());
     checks.push(await writableDirectory(stateRoot));
     checks.push(await this.tmuxConnectivity());
