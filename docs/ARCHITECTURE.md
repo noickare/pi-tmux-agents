@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the implemented architecture of `pi-tmux-agents` v0.3.8. It replaces the historical implementation PRD as the source of truth for current component boundaries and runtime behavior.
+This document describes the implemented architecture of `pi-tmux-agents` v0.3.9. It replaces the historical implementation PRD as the source of truth for current component boundaries and runtime behavior.
 
 ## System overview
 

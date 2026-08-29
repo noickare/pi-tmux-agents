@@ -43,7 +43,7 @@ set -g extended-keys-format csi-u
 Pi packages run with your user permissions. Review the source before installing it.
 
 ```bash
-pi install git:github.com/noickare/pi-tmux-agents@v0.3.8
+pi install git:github.com/noickare/pi-tmux-agents@v0.3.9
 ```
 
 The version tag is intentionally pinned. See [Updating](docs/UPDATING.md) before moving to another release.
@@ -124,7 +124,7 @@ See [Usage](docs/USAGE.md) for lifecycle decisions, all direct commands, dashboa
 
 ## Project status
 
-The current release is v0.3.8. The project is usable for production-oriented local workflows, but it remains pre-1.0: release notes may announce intentional protocol or configuration breaks. Pin releases and read the [changelog](CHANGELOG.md) before updating.
+The current release is v0.3.9. The project is usable for production-oriented local workflows, but it remains pre-1.0: release notes may announce intentional protocol or configuration breaks. Pin releases and read the [changelog](CHANGELOG.md) before updating.
 
 ## Security
 

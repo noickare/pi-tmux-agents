@@ -2,6 +2,14 @@
 
 All notable user-visible changes are documented here. Releases use semantic versioning; while the project is pre-1.0, minor releases may include intentional breaking changes called out below.
 
+## 0.3.9 — 2026-08-29
+
+### Changed
+
+- Update the runtime TypeScript launcher to `tsx` 4.23.12, incorporating loader, source-map, coverage, and `import.meta` fixes
+- Update the test runner to Vitest 4.1.11
+- Keep standalone TypeBox updates coupled to coordinated Pi host upgrades and Node declaration majors within the supported runtime baseline
+
 ## 0.3.8 — 2026-08-29
 
 ### Changed
