@@ -202,7 +202,7 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("agents", {
-    description: "Open dashboard, or use: /agents new|check|attach|steer|follow-up|replace|diff|validate|clean",
+    description: "Open dashboard, or use: /agents new|check|attach|steer|follow-up|abort|replace|diff|validate|clean",
     handler: async (args, ctx) => {
       const [action, agentId, ...rest] = args.trim().split(/\s+/).filter(Boolean);
       if (action === "doctor") return runDoctor(ctx);
@@ -213,6 +213,7 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
         return;
       }
       if (action === "attach" && agentId) return attachAgent(ctx, requireAgent(agentId));
+      if (action === "abort" && agentId) return abortFromDashboard(ctx, agentId);
       if (action === "clean") {
         if (!await ctx.ui.confirm("Clean terminal agents?", "Clean worktrees are removed; dirty worktrees are retained.")) return;
         const result = await requireOrchestrator().clean(ctx.cwd, [agentId, ...rest].includes("--discard"));
@@ -369,6 +370,15 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
 
   pi.on("agent_settled", async (_event, ctx) => {
     scheduleParentWakeFlush(ctx);
+  });
+
+  pi.on("ui_prompt_start", () => {
+    parentWakes.setUiPromptActive(true);
+  });
+
+  pi.on("ui_prompt_end", () => {
+    parentWakes.setUiPromptActive(false);
+    scheduleParentWakeFlush(parentContext);
   });
 
   pi.on("session_shutdown", (_event, ctx) => {
@@ -656,7 +666,7 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
   }
 
   async function abortFromDashboard(ctx: ExtensionCommandContext, id: string): Promise<void> {
-    if (await ctx.ui.confirm(`Abort ${id}?`, "The persistent agent will remain available after its current operation is aborted.")) await requireOrchestrator().command(id, "abort");
+    if (await ctx.ui.confirm(`Abort ${id}?`, "Queued steering and follow-ups will be discarded. The persistent agent will remain available after its current operation is aborted.")) await requireOrchestrator().command(id, "abort");
   }
 
   async function attachAgent(ctx: ExtensionCommandContext, snapshot: AgentSnapshot): Promise<void> {

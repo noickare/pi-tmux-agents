@@ -61,6 +61,8 @@ After the current work, ask the worker to run the focused regression test and su
 
 If the child is idle, steering and follow-up requests become a new prompt. If it is awaiting review, use a revision instead.
 
+Aborting a running child first discards its queued steering and follow-up messages, then cancels the current operation. If queue clearing cannot be confirmed, the runner force-restarts the child RPC process so stale queued work cannot resume.
+
 ## Review decisions
 
 Every settled child produces a result and moves to `awaiting_review`. The parent must inspect the result and authoritative workspace before recording one of these decisions:
@@ -87,6 +89,7 @@ Acceptance does **not** merge or clean the branch. The parent still decides how 
 | `/agents attach <id>` | Attach or switch to the child's tmux window; TUI mode only |
 | `/agents steer <id> [message]` | Steer active work; opens an input when the message is omitted |
 | `/agents follow-up <id> [message]` | Queue work until the child finishes its current work; opens an editor when omitted |
+| `/agents abort <id>` | Clear queued messages and abort the child's current operation |
 | `/agents replace <id> [reason]` | Replace a child while preserving its worktree and context handoff |
 | `/agents diff <id>` | Show the worktree diff from the base commit |
 | `/agents validate <id> <executable> [args...]` | Run a validation command without shell interpolation |
@@ -111,7 +114,7 @@ Agent IDs may be abbreviated when the prefix is unique. An exact agent name is a
 | `r` | Restart the RPC session or replace the child |
 | `o` | Open the tmux window |
 | `c` | Run the watchdog |
-| `x` | Abort current work |
+| `x` | Clear queued messages and abort current work |
 | `d` | Close and clean |
 | `Esc` | Return to overview or close the dashboard |
 

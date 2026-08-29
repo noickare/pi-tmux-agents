@@ -34,4 +34,17 @@ describe("ParentWakeCoordinator", () => {
     coordinator.enqueue("attention:two", () => ({ content: "two failed", fingerprint: "failed" }));
     expect(coordinator.drain()).toEqual(["one completed", "two failed"]);
   });
+
+  it("retains parent wakeups until a blocking UI prompt ends", () => {
+    const coordinator = new ParentWakeCoordinator();
+    coordinator.setUiPromptActive(true);
+    coordinator.enqueue("completion:one", () => ({ content: "one completed", fingerprint: "1" }));
+
+    expect(coordinator.drain()).toEqual([]);
+    expect(coordinator.hasPending()).toBe(true);
+
+    coordinator.setUiPromptActive(false);
+    expect(coordinator.drain()).toEqual(["one completed"]);
+    expect(coordinator.hasPending()).toBe(false);
+  });
 });

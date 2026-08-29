@@ -17,10 +17,15 @@ const unsubscribe = rpc.subscribe((event) => {
   if (event.type === "extension_ui_request" && typeof event.method === "string") methods.push(event.method);
 });
 try {
+  const cleared = await rpc.send({ type: "clear_queue" });
+  const queue = cleared.data as { steering?: unknown; followUp?: unknown } | undefined;
+  if (!cleared.success || !Array.isArray(queue?.steering) || !Array.isArray(queue?.followUp)) {
+    throw new Error(cleared.error ?? "clear_queue RPC failed");
+  }
   const response = await rpc.send({ type: "prompt", message: "/agents check" });
   await new Promise((resolve) => setTimeout(resolve, 250));
   if (!response.success) throw new Error(response.error ?? "extension command failed");
-  console.log(`extension command: ${response.success ? "ok" : "failed"} · UI events: ${methods.join(", ") || "none"}`);
+  console.log(`clear_queue: ok · extension command: ok · UI events: ${methods.join(", ") || "none"}`);
 } finally {
   unsubscribe();
   await rpc.close();

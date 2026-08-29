@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the implemented architecture of `pi-tmux-agents` v0.3.7. It replaces the historical implementation PRD as the source of truth for current component boundaries and runtime behavior.
+This document describes the implemented architecture of `pi-tmux-agents` v0.3.8. It replaces the historical implementation PRD as the source of truth for current component boundaries and runtime behavior.
 
 ## System overview
 
@@ -48,7 +48,7 @@ The parent extension and each child runner are separate processes. They coordina
 - `worktrees.ts` creates, validates, merges, and removes Git worktrees and branches.
 - `snapshot-monitor.ts` reads durable child snapshots into the in-memory registry.
 - `watchdog.ts` checks heartbeats, progress, processes, tmux, queues, resources, UI requests, and worktrees.
-- `parent-wake-coordinator.ts` coalesces result and supervision messages until the parent is idle.
+- `parent-wake-coordinator.ts` coalesces result and supervision messages until the parent is idle and outside blocking extension UI prompts.
 
 ### Persistent child runner
 
@@ -56,6 +56,7 @@ The parent extension and each child runner are separate processes. They coordina
 
 - starts Pi in RPC mode with child extension discovery disabled;
 - sends the assignment, steering, follow-ups, and control commands over RPC;
+- clears queued steering and follow-ups before abort or graceful RPC shutdown;
 - translates structured RPC events into readable terminal output and durable state;
 - emits heartbeats independently of model output;
 - persists a result before entering `awaiting_review`;
@@ -132,6 +133,7 @@ Review decisions close the child process where appropriate but do not implicitly
 - Active work receives immediate `steer` or queued `follow_up` messages.
 - Steering or follow-up sent to an idle child is normalized to a prompt.
 - Control requests remain durable while a child is paused, but new messages should be sent after resume because the RPC process group is suspended.
+- Abort clears queued steering and follow-ups before cancelling active work; an unconfirmed clear forces an RPC restart.
 - An awaiting-review child accepts only review actions; corrections use `revise`.
 - Duplicate command IDs are acknowledged once and ignored on replay.
 - Interrupted or failed attempts still produce reviewable results when possible.

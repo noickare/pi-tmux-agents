@@ -3,7 +3,7 @@ import { PROTOCOL_VERSION } from "../core/protocol.js";
 import { assertTransition } from "../core/state-machine.js";
 import { AgentStateStore } from "../core/state-store.js";
 import type { AgentJob } from "./job.js";
-import type { RpcCommand, RpcEvent, RpcTransport } from "./rpc-types.js";
+import type { ClearQueueResult, RpcCommand, RpcEvent, RpcResponse, RpcTransport } from "./rpc-types.js";
 import { renderRpcEvent, type TranscriptWriter } from "./transcript.js";
 
 export interface PersistentRunnerOptions {
@@ -154,7 +154,7 @@ export class PersistentAgentRunner {
     if (force) await this.transport?.terminate();
     else await this.transport?.close();
     this.transport = undefined;
-    this.snapshot = withoutPendingUiRequest(this.snapshot);
+    this.snapshot = { ...withoutPendingUiRequest(this.snapshot), queuedMessages: 0 };
     await this.setStatus("starting", "Restarting RPC session");
     await this.connect();
     if (interrupted) await this.persistResult("interrupted", interruptedReason);
@@ -211,6 +211,16 @@ export class PersistentAgentRunner {
           break;
         case "abort":
           await this.setStatus("aborting", "Abort requested");
+          try {
+            const cleared = clearQueueData(await this.sendRpc({ type: "clear_queue" }));
+            const discarded = cleared.steering.length + cleared.followUp.length;
+            this.snapshot = { ...this.snapshot, queuedMessages: 0 };
+            this.recordActivity("command", `Cleared ${discarded} queued message${discarded === 1 ? "" : "s"} before abort`);
+          } catch (error) {
+            await this.flushEvents();
+            await this.restartTransport(true, `Forced RPC restart after queue clearing failed: ${(error as Error).message}`);
+            break;
+          }
           try {
             await this.sendRpc({ id: command.id, type: "abort" });
             await this.flushEvents();
@@ -329,9 +339,20 @@ export class PersistentAgentRunner {
       case "compaction_start":
         await this.setStatus("compacting", "Compacting context");
         return;
-      case "compaction_end":
-        await this.setStatus("running", "Compaction complete");
+      case "compaction_end": {
+        const reason = event.result
+          ? "Compaction complete"
+          : event.aborted === true
+            ? "Compaction aborted"
+            : `Compaction failed${typeof event.errorMessage === "string" ? `: ${event.errorMessage}` : ""}`;
+        if (this.snapshot.status === "aborting") {
+          this.recordActivity("diagnostic", reason);
+          await this.markProgress();
+          return;
+        }
+        await this.setStatus("running", reason);
         return;
+      }
       case "queue_update": {
         const steering = Array.isArray(event.steering) ? event.steering.length : 0;
         const followUp = Array.isArray(event.followUp) ? event.followUp.length : 0;
@@ -530,15 +551,31 @@ export class PersistentAgentRunner {
     this.streamingAssistantUsage = next;
   }
 
-  private async sendRpc(command: RpcCommand): Promise<void> {
+  private async sendRpc(command: RpcCommand): Promise<RpcResponse> {
     const response = await this.requireTransport().send(command);
     if (!response.success) throw new Error(response.error ?? `RPC ${command.type} command failed`);
+    return response;
   }
 
   private requireTransport(): RpcTransport {
     if (!this.transport) throw new Error("RPC transport is unavailable");
     return this.transport;
   }
+}
+
+function clearQueueData(response: RpcResponse): ClearQueueResult {
+  if (response.command !== "clear_queue" || !response.data || typeof response.data !== "object") {
+    throw new Error("RPC clear_queue returned invalid data");
+  }
+  const data = response.data as { steering?: unknown; followUp?: unknown };
+  if (!isStringArray(data.steering) || !isStringArray(data.followUp)) {
+    throw new Error("RPC clear_queue returned invalid data");
+  }
+  return { steering: data.steering, followUp: data.followUp };
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function messageCommand(command: AgentCommand, type = command.type): RpcCommand {

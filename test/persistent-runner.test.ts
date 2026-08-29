@@ -18,22 +18,33 @@ class FakeTransport implements RpcTransport {
   closed = false;
   terminated = false;
   nextError: string | undefined;
+  nextErrorType: string | undefined;
   nextThrownError: Error | undefined;
+  nextThrownErrorType: string | undefined;
+  clearQueueData = { steering: [] as string[], followUp: [] as string[] };
   private readonly listeners = new Set<(event: RpcEvent) => void>();
 
   async send(command: RpcCommand): Promise<RpcResponse> {
     this.commands.push(command);
-    if (this.nextThrownError) {
+    if (this.nextThrownError && (!this.nextThrownErrorType || this.nextThrownErrorType === command.type)) {
       const error = this.nextThrownError;
       this.nextThrownError = undefined;
+      this.nextThrownErrorType = undefined;
       throw error;
     }
-    if (this.nextError) {
+    if (this.nextError && (!this.nextErrorType || this.nextErrorType === command.type)) {
       const error = this.nextError;
       this.nextError = undefined;
+      this.nextErrorType = undefined;
       return { type: "response", command: command.type, success: false, error, ...(command.id ? { id: command.id } : {}) };
     }
-    return { type: "response", command: command.type, success: true, ...(command.id ? { id: command.id } : {}) };
+    return {
+      type: "response",
+      command: command.type,
+      success: true,
+      ...(command.type === "clear_queue" ? { data: this.clearQueueData } : {}),
+      ...(command.id ? { id: command.id } : {}),
+    };
   }
   subscribe(listener: (event: RpcEvent) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   pause(): void { this.paused = true; }
@@ -264,6 +275,144 @@ describe("PersistentAgentRunner", () => {
     await second.stop();
   });
 
+  it("tracks same-run compaction between a large tool result and the next assistant response", async () => {
+    const { store, job } = await setup();
+    await store.appendCommand(createCommand({ id: "compact-assignment", agentId: job.agentId, type: "prompt", payload: { message: "Produce a large result" } }));
+    const transport = new FakeTransport();
+    const runner = new PersistentAgentRunner(job, store, async () => transport, {
+      heartbeatIntervalMs: 60_000, commandPollIntervalMs: 60_000, output: { write() {} },
+    });
+    await runner.start();
+
+    transport.emit({ type: "agent_start" });
+    transport.emit({ type: "tool_execution_start", toolName: "bash", args: { command: "large-output" } });
+    transport.emit({ type: "tool_execution_end", toolName: "bash", isError: false });
+    transport.emit({ type: "compaction_start", reason: "threshold" });
+    transport.emit({ type: "compaction_end", reason: "threshold", result: { summary: "Compacted" }, aborted: false, willRetry: false });
+    transport.emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Continued after compaction" }], stopReason: "stop" } });
+    transport.emit({ type: "agent_settled" });
+    await runner.flushEvents();
+
+    expect(runner.currentSnapshot).toMatchObject({
+      status: "awaiting_review",
+      latestResult: { outcome: "completed", finalResponse: "Continued after compaction" },
+    });
+    const reasons = (await store.readEvents()).records
+      .filter((event) => event.type === "status_changed")
+      .map((event) => event.payload?.reason);
+    expect(reasons).toEqual(expect.arrayContaining(["Compacting context", "Compaction complete"]));
+    await runner.stop();
+  });
+
+  it("keeps abort authoritative when compaction ends as aborted", async () => {
+    const { store, job } = await setup();
+    await store.appendCommand(createCommand({ id: "compact-abort-assignment", agentId: job.agentId, type: "prompt", payload: { message: "Long compacting task" } }));
+    const transport = new FakeTransport();
+    transport.clearQueueData = { steering: ["queued correction"], followUp: ["queued follow-up"] };
+    const runner = new PersistentAgentRunner(job, store, async () => transport, {
+      heartbeatIntervalMs: 60_000, commandPollIntervalMs: 60_000, output: { write() {} },
+    });
+    await runner.start();
+    transport.emit({ type: "agent_start" });
+    transport.emit({ type: "queue_update", steering: ["queued correction"], followUp: ["queued follow-up"] });
+    transport.emit({ type: "compaction_start", reason: "threshold" });
+    await runner.flushEvents();
+
+    await store.appendCommand(createCommand({ id: "abort-during-compaction", agentId: job.agentId, type: "abort" }));
+    await runner.processCommands();
+    expect(transport.commands.slice(-2)).toEqual([
+      { type: "clear_queue" },
+      { id: "abort-during-compaction", type: "abort" },
+    ]);
+    expect(runner.currentSnapshot).toMatchObject({ status: "aborting", queuedMessages: 0 });
+
+    transport.emit({ type: "compaction_end", reason: "threshold", result: null, aborted: true, willRetry: false });
+    transport.emit({ type: "message_end", message: { role: "assistant", content: [], stopReason: "aborted" } });
+    transport.emit({ type: "agent_settled" });
+    await runner.flushEvents();
+    expect(runner.currentSnapshot).toMatchObject({
+      status: "awaiting_review",
+      latestResult: { outcome: "interrupted", error: "Agent operation aborted by parent" },
+    });
+    expect(runner.currentSnapshot.recentActivity?.some((item) => item.text === "Compaction aborted")).toBe(true);
+    await runner.stop();
+  });
+
+  it("reports a failed compaction before the run settles", async () => {
+    const { store, job } = await setup();
+    await store.appendCommand(createCommand({ id: "compact-failure-assignment", agentId: job.agentId, type: "prompt", payload: { message: "Compacting task" } }));
+    const transport = new FakeTransport();
+    const runner = new PersistentAgentRunner(job, store, async () => transport, {
+      heartbeatIntervalMs: 60_000, commandPollIntervalMs: 60_000, output: { write() {} },
+    });
+    await runner.start();
+    transport.emit({ type: "agent_start" });
+    transport.emit({ type: "compaction_start", reason: "threshold" });
+    transport.emit({ type: "compaction_end", reason: "threshold", result: null, aborted: false, errorMessage: "summary unavailable", willRetry: false });
+    await runner.flushEvents();
+    expect(runner.currentSnapshot).toMatchObject({ status: "running", statusReason: "Compaction failed: summary unavailable" });
+    await runner.stop();
+  });
+
+  it("clears queued messages before aborting an active child", async () => {
+    const { store, job } = await setup();
+    await store.appendCommand(createCommand({ id: "clear-before-abort-assignment", agentId: job.agentId, type: "prompt", payload: { message: "Long task" } }));
+    const transport = new FakeTransport();
+    transport.clearQueueData = { steering: ["change direction"], followUp: ["summarize later"] };
+    const runner = new PersistentAgentRunner(job, store, async () => transport, {
+      heartbeatIntervalMs: 60_000, commandPollIntervalMs: 60_000, output: { write() {} },
+    });
+    await runner.start();
+    transport.emit({ type: "agent_start" });
+    transport.emit({ type: "queue_update", steering: ["change direction"], followUp: ["summarize later"] });
+    await runner.flushEvents();
+    expect(runner.currentSnapshot.queuedMessages).toBe(2);
+
+    await store.appendCommand(createCommand({ id: "abort-after-clear", agentId: job.agentId, type: "abort" }));
+    await runner.processCommands();
+
+    expect(transport.commands.slice(-2)).toEqual([
+      { type: "clear_queue" },
+      { id: "abort-after-clear", type: "abort" },
+    ]);
+    expect(runner.currentSnapshot).toMatchObject({ status: "aborting", queuedMessages: 0 });
+    expect(runner.currentSnapshot.recentActivity?.some((item) => item.text === "Cleared 2 queued messages before abort")).toBe(true);
+    await runner.stop();
+  });
+
+  it("force-restarts without aborting when queue clearing fails", async () => {
+    const { store, job } = await setup();
+    await store.appendCommand(createCommand({ id: "clear-failure-assignment", agentId: job.agentId, type: "prompt", payload: { message: "Long task" } }));
+    const first = new FakeTransport();
+    const second = new FakeTransport();
+    const transports = [first, second];
+    const runner = new PersistentAgentRunner(job, store, async () => transports.shift()!, {
+      heartbeatIntervalMs: 60_000, commandPollIntervalMs: 60_000, output: { write() {} },
+    });
+    await runner.start();
+    first.emit({ type: "agent_start" });
+    first.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Partial work" } });
+    await runner.flushEvents();
+    first.nextThrownError = new Error("RPC command timed out: clear_queue");
+    first.nextThrownErrorType = "clear_queue";
+
+    await store.appendCommand(createCommand({ id: "abort-after-clear-failure", agentId: job.agentId, type: "abort" }));
+    await runner.processCommands();
+
+    expect(first.terminated).toBe(true);
+    expect(first.commands.at(-1)).toEqual({ type: "clear_queue" });
+    expect(first.commands.some((command) => command.type === "abort")).toBe(false);
+    expect(runner.currentSnapshot).toMatchObject({
+      status: "awaiting_review",
+      queuedMessages: 0,
+      latestResult: { outcome: "interrupted", error: expect.stringContaining("queue clearing failed") },
+    });
+    expect((await store.readEvents()).records.at(-1)).toMatchObject({
+      type: "command_acknowledged", commandId: "abort-after-clear-failure", payload: { success: true },
+    });
+    await runner.stop();
+  });
+
   it("records an aborted settled run as interrupted", async () => {
     const { store, job } = await setup();
     await store.appendCommand(createCommand({ id: "abort-result", agentId: job.agentId, type: "prompt", payload: { message: "Long task" } }));
@@ -291,10 +440,15 @@ describe("PersistentAgentRunner", () => {
     first.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Partial work" } });
     await runner.flushEvents();
     first.nextThrownError = new Error("RPC command timed out: abort");
+    first.nextThrownErrorType = "abort";
     await store.appendCommand(createCommand({ id: "abort-command", agentId: job.agentId, type: "abort" }));
     await runner.processCommands();
 
     expect(first.terminated).toBe(true);
+    expect(first.commands.slice(-2)).toEqual([
+      { type: "clear_queue" },
+      { id: "abort-command", type: "abort" },
+    ]);
     expect(runner.currentSnapshot).toMatchObject({
       status: "awaiting_review",
       latestResult: { outcome: "interrupted", error: expect.stringContaining("graceful abort failed") },

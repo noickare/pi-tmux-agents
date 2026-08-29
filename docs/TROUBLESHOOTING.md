@@ -32,6 +32,18 @@ tmux
 
 `tmux kill-server` ends every tmux session on that server. Save or stop unrelated tmux work first.
 
+### Links, images, or colors are misdetected behind tmux
+
+Pi 0.84.4 can override terminal capability detection when a multiplexer or terminal proxy hides the outer terminal's support:
+
+```bash
+PI_HYPERLINKS=1 PI_IMAGE_PROTOCOL=kitty PI_TRUE_COLOR=1 pi
+```
+
+Use `0` or `none` to force a capability off, and `auto` to restore detection. The equivalent Pi settings are `terminal.hyperlinks`, `terminal.images`, and `terminal.trueColor`; settings take precedence over environment variables. Only force capabilities supported by the complete terminal path because unsupported escape sequences can corrupt rendering.
+
+These overrides affect the parent Pi TUI. Child agents run in RPC mode and do not render terminal images or hyperlinks themselves.
+
 ### `/agents` shows no children
 
 Children are scoped to the current parent Pi session. Resume the parent session that created them, or inspect managed tmux sessions with:

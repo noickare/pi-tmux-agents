@@ -94,6 +94,13 @@ export class PiRpcProcess implements RpcTransport {
 
   async close(): Promise<void> {
     if (this.closed) return;
+    try {
+      const response = await this.send({ type: "clear_queue" });
+      if (!response.success) throw new Error(response.error ?? "RPC clear_queue command failed");
+    } catch {
+      await this.terminate();
+      return;
+    }
     try { await this.send({ type: "abort" }); } catch { /* process may already be gone */ }
     await this.terminate();
   }

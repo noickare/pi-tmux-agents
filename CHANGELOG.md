@@ -2,11 +2,18 @@
 
 All notable user-visible changes are documented here. Releases use semantic versioning; while the project is pre-1.0, minor releases may include intentional breaking changes called out below.
 
-## Unreleased
+## 0.3.8 — 2026-08-29
 
 ### Changed
 
+- Require Pi 0.84.4 and develop against exact, synchronized Pi 0.84.4 host packages while keeping runtime core packages peer-provided
 - Reorganize the README and public documentation around quick start, usage, configuration, architecture, troubleshooting, safe updates, contribution, security, and release workflows
+
+### Fixed
+
+- Defer automatic parent supervision wakeups while the user is inside a blocking extension UI prompt
+- Clear queued steering and follow-up messages before aborting or gracefully closing child RPC sessions, force-restarting when safe queue clearing cannot be confirmed
+- Preserve abort state when an in-flight compaction reports its terminal event and distinguish successful, aborted, and failed compaction status
 
 ## 0.3.7 — 2026-08-24
 

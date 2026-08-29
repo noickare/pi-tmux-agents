@@ -4,6 +4,11 @@ export interface RpcCommand {
   [key: string]: unknown;
 }
 
+export interface ClearQueueResult {
+  steering: string[];
+  followUp: string[];
+}
+
 export interface RpcResponse {
   type: "response";
   command: string;

@@ -9,6 +9,7 @@ export type ParentWakeProducer = () => ParentWakeMessage | undefined;
 export class ParentWakeCoordinator {
   private readonly pending = new Map<string, ParentWakeProducer>();
   private readonly delivered = new Map<string, string>();
+  private uiPromptActive = false;
 
   enqueue(key: string, producer: ParentWakeProducer): void {
     this.pending.set(key, producer);
@@ -22,6 +23,11 @@ export class ParentWakeCoordinator {
   reset(): void {
     this.pending.clear();
     this.delivered.clear();
+    this.uiPromptActive = false;
+  }
+
+  setUiPromptActive(active: boolean): void {
+    this.uiPromptActive = active;
   }
 
   hasPending(): boolean {
@@ -29,6 +35,7 @@ export class ParentWakeCoordinator {
   }
 
   drain(): string[] {
+    if (this.uiPromptActive) return [];
     const pending = [...this.pending.entries()];
     this.pending.clear();
     const messages: string[] = [];
