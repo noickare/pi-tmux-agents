@@ -2,6 +2,29 @@
 
 All notable user-visible changes are documented here. Releases use semantic versioning; while the project is pre-1.0, minor releases may include intentional breaking changes called out below.
 
+## 0.4.0 — 2026-08-31
+
+### Added
+
+- Add Activity as the first-class TUI surface for observable main-agent work and optional delegated work
+- Capture provider reasoning summaries, assistant responses, tools, prompts, compaction, and failures in occurrence order
+- Capture bounded child reasoning summaries and response blocks from Pi RPC events
+- Add explicit keyboard navigation, direct view keys, result-review controls, resolved history, and a main-only state
+
+### Changed
+
+- Replace `/agents` with `/activity` and the child-only dashboard with Overview, Main, Delegated, and Events views
+- Hide supervision control messages from the visible transcript while retaining them in model context and durable child results
+- Label provider reasoning honestly and use Pi's subdued thinking styling; hidden raw chain-of-thought is not claimed
+- Require Pi 0.84.4 or newer
+- Bump the durable child protocol to v3 for chronological reasoning activity; v2 jobs, snapshots, and results are intentionally not migrated
+
+### Upgrade notes
+
+- Before updating, finish or stop and clean existing children with v0.3.9. After updating, use `/activity`; the `/agents`, `/agents-doctor`, and `/agents-setup` commands no longer exist.
+- To inspect retained v2 child state after an update, roll back to v0.3.9. Do not move either immutable release tag.
+- Bounded child reasoning summaries and response blocks are now stored in the existing private durable state. Treat that state as sensitive; project-trust, file-permission, process-execution, and cleanup boundaries are unchanged.
+
 ## 0.3.9 — 2026-08-29
 
 ### Changed

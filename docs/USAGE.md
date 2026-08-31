@@ -1,17 +1,35 @@
 # Usage
 
-`pi-tmux-agents` is controlled primarily through natural-language requests to the parent Pi session. The parent calls the `tmux_agent` tool, while `/agents` commands provide direct operator controls.
+Activity is always available for the parent Pi session. It shows observable main-agent events whether or not work is delegated. The parent calls the `tmux_agent` tool only when persistent delegation is useful, while `/activity` provides direct operator controls.
 
 ## Core concepts
 
 - **Parent:** the Pi session where the extension is loaded. It delegates work and owns the final review decision.
+- **Activity:** the chronological, keyboard-operated view of the main agent and optional delegated work.
+- **Provider reasoning summary:** reasoning content emitted by the configured provider. Activity does not claim access to hidden raw chain-of-thought.
 - **Child:** a persistent Pi RPC session running in a tmux window.
 - **Read-only child:** works in the parent's current directory without a dedicated branch or worktree.
 - **Mutating child:** works on an `agent/<agent-id>` branch in a sibling `.worktrees/<agent-id>` directory.
 - **Assignment attempt:** one run of a task. Requesting a revision keeps the assignment and workspace but creates another attempt.
 - **Awaiting review:** the child has settled and produced a durable result; ordinary prompts cannot bypass the parent's review.
 
-Agent lists and runtime state are scoped to the current parent Pi session. An empty `/agents` dashboard does not mean another parent session has no children.
+Agent lists and runtime state are scoped to the current parent Pi session. Activity still shows main-agent work when the delegated list is empty. An empty delegated list does not mean another parent session has no children.
+
+## What Activity can observe
+
+Activity derives its state from Pi's public extension events. It does not require deterministic agent plans or invented `current`/`next` fields.
+
+| Activity state | Observable source |
+| --- | --- |
+| Starting, continuing, ready | `agent_start`, `turn_start`, `turn_end`, `agent_end`, `agent_settled` |
+| Reasoning | provider `thinking_start`, `thinking_delta`, and `thinking_end` events |
+| Responding | assistant text stream events |
+| Tool running | `tool_execution_start`, update, and end events |
+| Waiting for you | Pi UI prompt start and end events |
+| Compacting | Pi compaction lifecycle events |
+| Attention | tool, message, or compaction errors and watchdog findings |
+
+Reasoning summaries use Pi's subdued thinking color and italic treatment. They appear in occurrence order with tool and response events. Pi does not expose hidden raw reasoning tokens through the extension API, so Activity labels provider summaries honestly.
 
 ## Typical workflows
 
@@ -81,44 +99,49 @@ Acceptance does **not** merge or clean the branch. The parent still decides how 
 
 | Command | Description |
 | --- | --- |
-| `/agents` | Open the dashboard |
-| `/agents new <task>` | Start an ad-hoc mutating child |
-| `/agents check` | Run the watchdog immediately |
-| `/agents doctor` | Check prerequisites and configuration |
-| `/agents setup` | Show non-destructive setup guidance |
-| `/agents attach <id>` | Attach or switch to the child's tmux window; TUI mode only |
-| `/agents steer <id> [message]` | Steer active work; opens an input when the message is omitted |
-| `/agents follow-up <id> [message]` | Queue work until the child finishes its current work; opens an editor when omitted |
-| `/agents abort <id>` | Clear queued messages and abort the child's current operation |
-| `/agents replace <id> [reason]` | Replace a child while preserving its worktree and context handoff |
-| `/agents diff <id>` | Show the worktree diff from the base commit |
-| `/agents validate <id> <executable> [args...]` | Run a validation command without shell interpolation |
-| `/agents clean [--discard]` | Clean terminal children; retain dirty work unless discard is explicit |
-| `/agents-doctor` | Alias for `/agents doctor` |
-| `/agents-setup` | Alias for `/agents setup` |
+| `/activity` or `Ctrl+Alt+A` | Open Activity |
+| `/activity new <task>` | Start an ad-hoc mutating child |
+| `/activity check` | Run the watchdog immediately |
+| `/activity doctor` | Check prerequisites and configuration |
+| `/activity setup` | Show non-destructive setup guidance |
+| `/activity attach <id>` | Attach or switch to the child's tmux window; TUI mode only |
+| `/activity steer <id> [message]` | Steer active work; opens an input when the message is omitted |
+| `/activity follow-up <id> [message]` | Queue work until the child finishes its current work; opens an editor when omitted |
+| `/activity abort <id>` | Clear queued messages and abort the child's current operation |
+| `/activity replace <id> [reason]` | Replace a child while preserving its worktree and context handoff |
+| `/activity diff <id>` | Show the worktree diff from the base commit |
+| `/activity validate <id> <executable> [args...]` | Run a validation command without shell interpolation |
+| `/activity clean [--discard]` | Clean terminal children; retain dirty work unless discard is explicit |
 
 Agent IDs may be abbreviated when the prefix is unique. An exact agent name is also accepted when it identifies only one child.
 
-`/agents clean --discard` can permanently remove uncommitted work. Inspect the affected worktrees first.
+`/activity clean --discard` can permanently remove uncommitted work. Inspect the affected worktrees first.
 
-## Dashboard keys
+## Activity keys
 
 | Key | Action |
 | --- | --- |
-| `↑`/`↓` or `j`/`k` | Select a child |
-| `Enter` | Open details |
-| `Tab` | Cycle overview, details, queue, activity, resources, diagnostics, and settings |
+| `Ctrl+Alt+A` | Open Activity from the normal Pi screen |
+| `Tab` / `Shift+Tab`, `←` / `→` | Move between Overview, Main, Delegated, and Events |
+| `1`–`4` | Jump directly to a view |
+| `↑`/`↓` or `j`/`k` | Select delegated work |
+| `Page Up` / `Page Down` | Scroll long Activity views while keeping the header and action footer visible |
+| `Enter` | Inspect selected work or open its completed result |
+| `h` | Toggle live and resolved delegated history |
 | `s` | Steer |
 | `f` | Queue a follow-up |
 | `p` | Pause or resume |
-| `r` | Restart the RPC session or replace the child |
+| `r` | Recover active work or request a revision for a completed result |
+| `a` | Accept a completed result |
+| `t` | Take over a completed result |
+| `e` | Escalate a completed result for a human decision |
 | `o` | Open the tmux window |
 | `c` | Run the watchdog |
 | `x` | Clear queued messages and abort current work |
-| `d` | Close and clean |
-| `Esc` | Return to overview or close the dashboard |
+| `d` | Close active work or dismiss a completed result |
+| `Esc` | Close Activity |
 
-At narrow terminal widths, views are shown one at a time instead of side by side.
+At narrow terminal widths, views stack vertically. The public Pi component API provides keyboard input but no mouse hit-testing or click callbacks, so Activity tabs are intentionally keyboard-operated and say so in the UI.
 
 ## Custom agent definitions
 
@@ -163,7 +186,7 @@ Priorities are `interactive`, `merge-critical`, `normal`, and `speculative`. Tas
 After accepted work has been merged or otherwise handled, ask the parent to clean the child or run:
 
 ```text
-/agents clean
+/activity clean
 ```
 
 Clean terminal worktrees and branches are removed. Dirty worktrees are retained with a reason so work is not lost. See [Troubleshooting and cleanup](TROUBLESHOOTING.md#cleanup-and-uninstall) for recovery and uninstall guidance.

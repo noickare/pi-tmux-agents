@@ -68,7 +68,7 @@ Review the package contents from `npm run pack:check` and inspect the complete d
 2. Create a new annotated, immutable Git tag matching the package version, for example `v0.3.8`.
 3. Push the commit and the new tag.
 4. Publish GitHub release notes from the matching changelog entry.
-5. Install the tag in a clean user environment, run `/agents-doctor`, and exercise a read-only child.
+5. Install the tag in a clean user environment, run `/activity doctor`, open Activity with no children, and exercise a read-only child.
 
 Never move or overwrite a published release tag. If a release is defective, publish a new version and document rollback to the previous known-good tag.
 

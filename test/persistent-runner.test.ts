@@ -125,6 +125,37 @@ describe("PersistentAgentRunner", () => {
     await runner.stop();
   });
 
+  it("captures child reasoning summaries and responses as bounded chronological activity", async () => {
+    const { store, job } = await setup();
+    await store.appendCommand(createCommand({ id: "reasoning-assignment", agentId: job.agentId, type: "prompt", payload: { message: "Inspect it" } }));
+    const transport = new FakeTransport();
+    const runner = new PersistentAgentRunner(job, store, async () => transport, {
+      heartbeatIntervalMs: 60_000,
+      commandPollIntervalMs: 60_000,
+      output: { write() {} },
+    });
+    await runner.start();
+    transport.emit({ type: "agent_start" });
+    transport.emit({ type: "message_update", assistantMessageEvent: { type: "thinking_start", contentIndex: 0 } });
+    transport.emit({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "Check the state boundary." } });
+    transport.emit({ type: "message_update", assistantMessageEvent: { type: "thinking_end", contentIndex: 0, content: "Check the state boundary." } });
+    transport.emit({ type: "tool_execution_start", toolName: "read", args: { path: "src/index.ts" } });
+    transport.emit({ type: "tool_execution_end", toolName: "read", isError: false });
+    transport.emit({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 1 } });
+    transport.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "The boundary is correct." } });
+    transport.emit({ type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 1, content: "The boundary is correct." } });
+    await runner.flushEvents();
+
+    const visible = (runner.currentSnapshot.recentActivity ?? []).filter((event) => ["reasoning", "tool", "message"].includes(event.kind));
+    expect(visible.map((event) => event.kind)).toEqual(["reasoning", "tool", "tool", "message"]);
+    expect(visible[0]).toMatchObject({ text: "Check the state boundary.", state: "complete" });
+    expect(visible[3]).toMatchObject({ text: "The boundary is correct.", state: "complete" });
+    const eventTypes = (await store.readEvents()).records.map((event) => event.type);
+    expect(eventTypes).toContain("reasoning_delta");
+    expect(eventTypes).toContain("message_delta");
+    await runner.stop();
+  });
+
   it("accepts a reviewed result and stops the child", async () => {
     const { store, job } = await setup();
     await store.appendCommand(createCommand({ id: "prompt-accept", agentId: job.agentId, type: "prompt", payload: { message: "Finish it" } }));
@@ -518,6 +549,9 @@ describe("PersistentAgentRunner", () => {
     await runner.start();
     expect(transport.paused).toBe(false);
     expect(runner.currentSnapshot.status).toBe("idle");
+    const activityIds = (runner.currentSnapshot.recentActivity ?? []).map((activity) => activity.id);
+    expect(activityIds.every((id) => id !== undefined)).toBe(true);
+    expect(new Set(activityIds).size).toBe(activityIds.length);
     await runner.stop();
   });
 });

@@ -22,7 +22,7 @@ try {
   if (!cleared.success || !Array.isArray(queue?.steering) || !Array.isArray(queue?.followUp)) {
     throw new Error(cleared.error ?? "clear_queue RPC failed");
   }
-  const response = await rpc.send({ type: "prompt", message: "/agents check" });
+  const response = await rpc.send({ type: "prompt", message: "/activity check" });
   await new Promise((resolve) => setTimeout(resolve, 250));
   if (!response.success) throw new Error(response.error ?? "extension command failed");
   console.log(`clear_queue: ok · extension command: ok · UI events: ${methods.join(", ") || "none"}`);

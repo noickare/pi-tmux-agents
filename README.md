@@ -4,18 +4,20 @@
 [![GitHub release](https://img.shields.io/github/v/release/noickare/pi-tmux-agents)](https://github.com/noickare/pi-tmux-agents/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Run persistent, steerable [Pi](https://github.com/earendil-works/pi) coding agents in tmux. Each child gets an inspectable session, mutating work can be isolated in a Git worktree, and the parent Pi session supervises results and failures.
+See what [Pi](https://github.com/earendil-works/pi) is doing as it happens, and run persistent, steerable coding agents in tmux when delegation helps. Activity presents the main agent's provider reasoning summaries, tools, responses, prompts, compaction, and failures in occurrence order. When children are used, their work and review states join the same operator surface.
 
-`pi-tmux-agents` is useful when one task can be split into independent research, implementation, test, or review tracks without losing visibility or control.
+`pi-tmux-agents` remains the package name. The product surface is **Activity** because the main agent is first-class and delegated work is optional.
 
 ## Highlights
 
 - **Persistent sessions:** child agents continue in tmux while the parent is busy or reloading.
+- **Main-agent visibility:** observable Pi lifecycle events are presented even when no child exists.
+- **Chronological reasoning:** provider reasoning summaries are faded and interleaved with the tools and responses that followed them.
 - **Safe parallel edits:** mutating children work on dedicated `agent/*` branches in sibling Git worktrees.
 - **Active supervision:** a watchdog checks heartbeats, progress, processes, tmux, resources, queues, and worktrees.
 - **Resource-aware scheduling:** work is queued or paused when CPU, memory, disk, or provider pressure is too high.
 - **Explicit review:** every settled result returns to the parent for acceptance, revision, takeover, dismissal, or escalation.
-- **Terminal-first UI:** `/agents` opens a responsive dashboard; every child can also be inspected directly in tmux.
+- **Terminal-first UI:** `/activity` or `Ctrl+Alt+A` opens a responsive, keyboard-operated Activity overlay; every child can also be inspected directly in tmux.
 
 ## Quick start
 
@@ -43,7 +45,7 @@ set -g extended-keys-format csi-u
 Pi packages run with your user permissions. Review the source before installing it.
 
 ```bash
-pi install git:github.com/noickare/pi-tmux-agents@v0.3.9
+pi install git:github.com/noickare/pi-tmux-agents@v0.4.0
 ```
 
 The version tag is intentionally pinned. See [Updating](docs/UPDATING.md) before moving to another release.
@@ -53,10 +55,10 @@ The version tag is intentionally pinned. See [Updating](docs/UPDATING.md) before
 Start Pi inside a Git repository and run:
 
 ```text
-/agents-doctor
+/activity doctor
 ```
 
-The doctor checks required versions, tmux options, private state storage, resource probes, and Git worktree support. `/agents-setup` shows non-destructive setup guidance; it never runs `sudo`, installs packages, or edits configuration.
+The doctor checks required versions, tmux options, private state storage, resource probes, and Git worktree support. `/activity setup` shows non-destructive setup guidance; it never runs `sudo`, installs packages, or edits configuration.
 
 ### 4. Delegate a first task
 
@@ -72,13 +74,14 @@ For a mutating task:
 Create a worker to fix the failing tests in an isolated worktree. Validate its changes, review the result, and tell me what should be merged.
 ```
 
-The parent uses the `tmux_agent` tool. You can monitor work with `/agents`; completed work is delivered back to the parent automatically.
+The parent uses the `tmux_agent` tool only when delegation is useful. Open `/activity` at any time; completed child work is stored for review instead of being dumped into the visible transcript.
 
 ## How it works
 
 ```text
 Parent Pi session
-├── tmux_agent tool and /agents dashboard
+├── /activity main-agent timeline
+├── optional tmux_agent delegation
 ├── scheduler and watchdog
 └── tmux session
     ├── read-only child → project directory
@@ -99,18 +102,18 @@ Transcripts and results can contain repository content or secrets printed by too
 
 | Command | Purpose |
 | --- | --- |
-| `/agents` | Open the dashboard |
-| `/agents new <task>` | Start an ad-hoc mutating child |
-| `/agents check` | Run the watchdog now |
-| `/agents attach <id>` | Open a child's tmux window |
-| `/agents steer <id> <message>` | Correct active work immediately |
-| `/agents follow-up <id> <message>` | Queue work until the child finishes its current work |
-| `/agents diff <id>` | Inspect changes from the child's base commit |
-| `/agents validate <id> <executable> [args...]` | Run a command in the child workspace |
-| `/agents clean [--discard]` | Remove terminal children and eligible worktrees |
-| `/agents-doctor` | Check dependencies and configuration |
+| `/activity` or `Ctrl+Alt+A` | Open Activity |
+| `/activity new <task>` | Start an ad-hoc mutating child |
+| `/activity check` | Run the watchdog now |
+| `/activity attach <id>` | Open a child's tmux window |
+| `/activity steer <id> <message>` | Correct active work immediately |
+| `/activity follow-up <id> <message>` | Queue work until the child finishes its current work |
+| `/activity diff <id>` | Inspect changes from the child's base commit |
+| `/activity validate <id> <executable> [args...]` | Run a command in the child workspace |
+| `/activity clean [--discard]` | Remove terminal children and eligible worktrees |
+| `/activity doctor` | Check dependencies and configuration |
 
-See [Usage](docs/USAGE.md) for lifecycle decisions, all direct commands, dashboard keys, and custom agent definitions.
+See [Usage](docs/USAGE.md) for observable main-agent states, lifecycle decisions, all direct commands, Activity keys, and custom agent definitions.
 
 ## Documentation
 
@@ -124,7 +127,7 @@ See [Usage](docs/USAGE.md) for lifecycle decisions, all direct commands, dashboa
 
 ## Project status
 
-The current release is v0.3.9. The project is usable for production-oriented local workflows, but it remains pre-1.0: release notes may announce intentional protocol or configuration breaks. Pin releases and read the [changelog](CHANGELOG.md) before updating.
+The current release is v0.4.0. The project is usable for production-oriented local workflows, but it remains pre-1.0: release notes may announce intentional protocol or configuration breaks. Pin releases and read the [changelog](CHANGELOG.md) before updating.
 
 ## Security
 

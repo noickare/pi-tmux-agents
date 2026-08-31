@@ -23,7 +23,7 @@ Run the extension directly from the checkout:
 pi -e ./src/extension/index.ts
 ```
 
-Inside Pi, run `/agents-doctor` before testing live child sessions.
+Inside Pi, run `/activity doctor` before testing live child sessions.
 
 ## Repository layout
 
@@ -31,7 +31,7 @@ Inside Pi, run `/agents-doctor` before testing live child sessions.
 src/core/       Protocol, configuration, registry, state, and agent definitions
 src/runner/     Persistent child runner and Pi RPC transport
 src/services/   Orchestration, tmux, worktrees, scheduler, watchdog, and diagnostics
-src/ui/         Dashboard, progress widget, and view models
+src/ui/         Activity overlay, compact widget, and view models
 test/           Unit and integration tests
 scripts/        Smoke tests, fixtures, and package checks
 docs/           User, architecture, update, and maintainer documentation
@@ -48,7 +48,8 @@ Run the narrowest relevant test while developing, then run the complete checks b
 | `npm run check` | Verify coordinated Pi host versions and TypeScript types |
 | `npm test` | Run the Vitest suite once |
 | `npm run validate` | Run `check` and the full test suite |
-| `npm run tui:fixtures` | Render dashboard and widget fixtures for manual inspection |
+| `npm run tui:fixtures` | Render Activity and widget fixtures for manual inspection |
+| `npm run tui:gallery` | Render the full Activity state gallery as HTML |
 | `npm run smoke:runner` | Exercise a live persistent runner |
 | `npm run smoke:extension` | Exercise extension startup and integration |
 | `npm run pack:check` | Inspect the package contents with `npm pack --dry-run` |

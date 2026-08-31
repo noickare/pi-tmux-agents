@@ -1,5 +1,6 @@
 import type { TmuxAgentsConfig } from "../core/config.js";
-import type { AgentActivity, AgentPriority, AgentSnapshot, AgentStatus, AgentUsage, AgentWeight } from "../core/protocol.js";
+import { emptyMainActivitySnapshot, type MainActivitySnapshot } from "../core/main-activity.js";
+import type { AgentActivity, AgentPriority, AgentResultSummary, AgentReviewState, AgentSnapshot, AgentStatus, AgentThinkingLevel, AgentUsage, AgentWeight } from "../core/protocol.js";
 import type { ResourceSnapshot } from "../services/scheduler.js";
 import type { WatchdogFinding } from "../services/watchdog.js";
 
@@ -28,10 +29,17 @@ export interface AgentRowViewModel {
   pendingUiRequest?: string;
   replaces?: string;
   replacedBy?: string;
+  latestResult?: AgentResultSummary;
+  reviewState?: AgentReviewState;
+  lastCompletedAt?: string;
+  thinkingLevel?: AgentThinkingLevel;
+  mutating?: boolean;
   completedAssignment: boolean;
+  terminal: boolean;
 }
 
 export interface DashboardViewModel {
+  main: MainActivitySnapshot;
   rows: readonly AgentRowViewModel[];
   counts: Readonly<Record<"running" | "queued" | "idle" | "review" | "attention", number>>;
   watchdogText: string;
@@ -47,6 +55,7 @@ export interface DashboardSupplement {
   findings?: readonly WatchdogFinding[];
   resources?: ResourceSnapshot;
   config?: TmuxAgentsConfig;
+  main?: MainActivitySnapshot;
 }
 
 const STATUS_PRESENTATION: Readonly<Record<AgentStatus, { icon: string; label: string }>> = {
@@ -88,7 +97,7 @@ export function createDashboardViewModel(
       statusLabel: presentation.label,
       icon: presentation.icon,
       task: snapshot.task ?? "No task assigned",
-      currentActivity: snapshot.currentTool ?? snapshot.statusReason ?? presentation.label,
+      currentActivity: snapshot.status === "awaiting_review" ? "Result ready for review" : snapshot.currentTool ?? snapshot.statusReason ?? presentation.label,
       elapsed: formatDuration(now.getTime() - new Date(snapshot.startedAt).getTime()),
       heartbeatAge: `${formatDuration(now.getTime() - new Date(snapshot.lastHeartbeatAt).getTime())} ago`,
       progressAge: `${formatDuration(now.getTime() - new Date(snapshot.lastProgressAt).getTime())} ago`,
@@ -98,6 +107,7 @@ export function createDashboardViewModel(
       usage: snapshot.usage,
       activity: snapshot.recentActivity ?? [],
       completedAssignment,
+      terminal: ["closed", "replaced"].includes(snapshot.status),
       ...(snapshot.worktree === undefined ? {} : { worktree: snapshot.worktree }),
       ...(snapshot.branch === undefined ? {} : { branch: snapshot.branch }),
       ...(snapshot.baseCommit === undefined ? {} : { baseCommit: snapshot.baseCommit }),
@@ -107,6 +117,11 @@ export function createDashboardViewModel(
       ...(snapshot.pendingUiRequest === undefined ? {} : { pendingUiRequest: `${snapshot.pendingUiRequest.method} since ${snapshot.pendingUiRequest.createdAt}` }),
       ...(snapshot.replaces === undefined ? {} : { replaces: snapshot.replaces }),
       ...(snapshot.replacedBy === undefined ? {} : { replacedBy: snapshot.replacedBy }),
+      ...(snapshot.latestResult === undefined ? {} : { latestResult: snapshot.latestResult }),
+      ...(snapshot.reviewState === undefined ? {} : { reviewState: snapshot.reviewState }),
+      ...(snapshot.lastCompletedAt === undefined ? {} : { lastCompletedAt: snapshot.lastCompletedAt }),
+      ...(snapshot.thinkingLevel === undefined ? {} : { thinkingLevel: snapshot.thinkingLevel }),
+      ...(snapshot.mutating === undefined ? {} : { mutating: snapshot.mutating }),
     } satisfies AgentRowViewModel;
   });
 
@@ -120,6 +135,7 @@ export function createDashboardViewModel(
     : undefined;
 
   return {
+    main: supplement.main ?? emptyMainActivitySnapshot(),
     rows,
     counts: {
       running: snapshots.filter((item) => ["running", "waiting", "retrying", "compacting"].includes(item.status)).length,

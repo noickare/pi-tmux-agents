@@ -29,7 +29,7 @@ pi --version
 Start Pi with the currently pinned extension and run:
 
 ```text
-/agents-doctor
+/activity doctor
 ```
 
 Do not move the extension pin until a compatible `pi-tmux-agents` release is available. Compatibility requirements are recorded in each release's changelog entry and the README requirements table.
@@ -42,7 +42,7 @@ Move to a reviewed release tag explicitly, then restart Pi:
 pi install git:github.com/noickare/pi-tmux-agents@v<version>
 ```
 
-Run `/agents-doctor` again. Before starting mutating work, create one read-only child and confirm that it starts, returns a result, and reaches parent review.
+Run `/activity doctor` again. Before starting mutating work, create one read-only child and confirm that it starts, returns a result, and reaches parent review.
 
 Pinned Git refs do not advance during `pi update --extensions` or `pi update --all`. Those commands reconcile the checkout to the configured ref. Moving a pinned package requires another `pi install ...@<new-ref>` command. This behavior makes rollout and rollback explicit.
 

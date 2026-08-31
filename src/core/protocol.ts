@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 2 as const;
+export const PROTOCOL_VERSION = 3 as const;
 
 export type AgentStatus =
   | "creating"
@@ -51,9 +51,11 @@ export interface AgentTaskResult extends AgentResultSummary {
 }
 
 export interface AgentActivity {
+  id?: string;
   at: string;
-  kind: "status" | "tool" | "message" | "diagnostic" | "command";
+  kind: "status" | "tool" | "message" | "reasoning" | "diagnostic" | "command";
   text: string;
+  state?: "active" | "complete" | "error";
 }
 
 export interface PendingUiRequest {
@@ -92,6 +94,7 @@ export type AgentEventType =
   | "heartbeat"
   | "status_changed"
   | "message_delta"
+  | "reasoning_delta"
   | "tool_started"
   | "tool_updated"
   | "tool_finished"

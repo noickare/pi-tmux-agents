@@ -1,4 +1,5 @@
-import type { AgentCommand, AgentEvent, AgentEventType, AgentSnapshot, AgentStatus, AgentTaskResult, AgentUsage } from "../core/protocol.js";
+import { randomUUID } from "node:crypto";
+import type { AgentActivity, AgentCommand, AgentEvent, AgentEventType, AgentSnapshot, AgentStatus, AgentTaskResult, AgentUsage } from "../core/protocol.js";
 import { PROTOCOL_VERSION } from "../core/protocol.js";
 import { assertTransition } from "../core/state-machine.js";
 import { AgentStateStore } from "../core/state-store.js";
@@ -31,6 +32,7 @@ export class PersistentAgentRunner {
   private attemptStartedAt: string | undefined;
   private attemptUsageStart: AgentUsage = emptyUsage();
   private streamingAssistantUsage: AgentUsage = emptyUsage();
+  private readonly contentActivityIds = new Map<string, string>();
   private snapshot: AgentSnapshot;
   private readonly now: () => Date;
   private readonly output: TranscriptWriter;
@@ -296,11 +298,46 @@ export class PersistentAgentRunner {
         return;
       case "message_update": {
         this.applyAssistantUsage(event.usage);
-        const update = event.assistantMessageEvent as { type?: string; delta?: string } | undefined;
+        const update = event.assistantMessageEvent as { type?: string; contentIndex?: number; delta?: string; content?: string } | undefined;
+        if (update?.type === "start") {
+          this.contentActivityIds.clear();
+          return;
+        }
+        if (update?.type === "thinking_start") {
+          await this.markProgress();
+          this.startContentActivity("reasoning", update.contentIndex, "");
+          await this.emit("reasoning_delta", { phase: "start", contentIndex: update.contentIndex });
+          return;
+        }
+        if (update?.type === "thinking_delta" && update.delta) {
+          await this.markProgress();
+          this.appendContentActivity("reasoning", update.contentIndex, update.delta);
+          await this.emit("reasoning_delta", { phase: "delta", contentIndex: update.contentIndex, delta: update.delta });
+          return;
+        }
+        if (update?.type === "thinking_end") {
+          await this.markProgress();
+          this.finishContentActivity("reasoning", update.contentIndex, update.content ?? "");
+          await this.emit("reasoning_delta", { phase: "end", contentIndex: update.contentIndex });
+          return;
+        }
+        if (update?.type === "text_start") {
+          await this.markProgress();
+          this.startContentActivity("message", update.contentIndex, "");
+          await this.emit("message_delta", { phase: "start", contentIndex: update.contentIndex });
+          return;
+        }
         if (update?.type === "text_delta" && update.delta) {
           this.assistantText += update.delta;
           await this.markProgress();
-          await this.emit("message_delta", { delta: update.delta });
+          this.appendContentActivity("message", update.contentIndex, update.delta);
+          await this.emit("message_delta", { phase: "delta", contentIndex: update.contentIndex, delta: update.delta });
+          return;
+        }
+        if (update?.type === "text_end") {
+          await this.markProgress();
+          this.finishContentActivity("message", update.contentIndex, update.content ?? "");
+          await this.emit("message_delta", { phase: "end", contentIndex: update.contentIndex });
         }
         return;
       }
@@ -314,11 +351,12 @@ export class PersistentAgentRunner {
           this.streamingAssistantUsage = emptyUsage();
           if (message.usage) await this.emit("usage_changed", { usage: this.snapshot.usage });
         }
+        this.contentActivityIds.clear();
         return;
       }
       case "tool_execution_start":
         await this.markProgress();
-        this.recordActivity("tool", `Started ${String(event.toolName ?? "tool")}`);
+        this.recordActivity("tool", `Started ${String(event.toolName ?? "tool")}`, "active");
         this.snapshot = { ...this.snapshot, currentTool: String(event.toolName ?? "tool") };
         await this.emit("tool_started", { toolName: event.toolName, args: event.args });
         return;
@@ -328,7 +366,7 @@ export class PersistentAgentRunner {
         return;
       case "tool_execution_end":
         await this.markProgress();
-        this.recordActivity("tool", `${event.isError === true ? "Failed" : "Finished"} ${String(event.toolName ?? "tool")}`);
+        this.recordActivity("tool", `${event.isError === true ? "Failed" : "Finished"} ${String(event.toolName ?? "tool")}`, event.isError === true ? "error" : "complete");
         this.snapshot = withoutCurrentTool(this.snapshot);
         await this.emit("tool_finished", { toolName: event.toolName, isError: event.isError === true });
         return;
@@ -400,8 +438,35 @@ export class PersistentAgentRunner {
     this.snapshot = { ...this.snapshot, lastProgressAt: timestamp, updatedAt: timestamp };
   }
 
-  private recordActivity(kind: "status" | "tool" | "message" | "diagnostic" | "command", text: string): void {
-    const activity = [...(this.snapshot.recentActivity ?? []), { at: this.now().toISOString(), kind, text }].slice(-20);
+  private recordActivity(kind: AgentActivity["kind"], text: string, state?: AgentActivity["state"], id?: string): string {
+    const activityId = id ?? `${this.job.agentId}-activity-${randomUUID()}`;
+    const entry = { id: activityId, at: this.now().toISOString(), kind, text: cap(text, 4_000), ...(state ? { state } : {}) } satisfies AgentActivity;
+    const activity = [...(this.snapshot.recentActivity ?? []), entry].slice(-60);
+    this.snapshot = { ...this.snapshot, recentActivity: activity };
+    return activityId;
+  }
+
+  private startContentActivity(kind: "message" | "reasoning", contentIndex = 0, text: string): string {
+    const key = `${kind}:${contentIndex}`;
+    const existing = this.contentActivityIds.get(key);
+    if (existing) return existing;
+    const id = this.recordActivity(kind, text, "active");
+    this.contentActivityIds.set(key, id);
+    return id;
+  }
+
+  private appendContentActivity(kind: "message" | "reasoning", contentIndex = 0, delta: string): void {
+    const id = this.startContentActivity(kind, contentIndex, "");
+    this.updateContentActivity(id, (current) => cap(current + delta, 4_000), "active");
+  }
+
+  private finishContentActivity(kind: "message" | "reasoning", contentIndex = 0, content: string): void {
+    const id = this.startContentActivity(kind, contentIndex, "");
+    this.updateContentActivity(id, (current) => cap(content || current, 4_000), "complete");
+  }
+
+  private updateContentActivity(id: string, text: (current: string) => string, state: NonNullable<AgentActivity["state"]>): void {
+    const activity = (this.snapshot.recentActivity ?? []).map((item) => item.id === id ? { ...item, text: text(item.text), state } : item);
     this.snapshot = { ...this.snapshot, recentActivity: activity };
   }
 
@@ -531,6 +596,7 @@ export class PersistentAgentRunner {
     this.attemptStartedAt = timestamp;
     this.attemptUsageStart = { ...this.snapshot.usage };
     this.streamingAssistantUsage = emptyUsage();
+    this.contentActivityIds.clear();
     this.snapshot = {
       ...this.snapshot,
       task: revision ? (this.snapshot.task ?? task) : task,

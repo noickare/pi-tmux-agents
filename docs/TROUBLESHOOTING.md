@@ -3,12 +3,12 @@
 Start with the built-in doctor:
 
 ```text
-/agents-doctor
+/activity doctor
 ```
 
 It checks tmux, Git, Pi, Node.js, state-directory permissions, tmux connectivity and key settings, system resource probes, real Git worktree creation, and stale managed sessions.
 
-`/agents-setup` displays suggested fixes without executing commands or changing files.
+`/activity setup` displays suggested fixes without executing commands or changing files.
 
 ## Common problems
 
@@ -44,7 +44,7 @@ Use `0` or `none` to force a capability off, and `auto` to restore detection. Th
 
 These overrides affect the parent Pi TUI. Child agents run in RPC mode and do not render terminal images or hyperlinks themselves.
 
-### `/agents` shows no children
+### Activity shows no delegated work
 
 Children are scoped to the current parent Pi session. Resume the parent session that created them, or inspect managed tmux sessions with:
 
@@ -56,7 +56,7 @@ Managed sessions start with `pi-agents-`. Do not kill one until you have checked
 
 ### A child remains queued
 
-Run `/agents check` and open the dashboard's resource and diagnostics views. Common reasons are:
+Run `/activity check` and open Activity's Events view. Common reasons are:
 
 - memory reservation would be exceeded;
 - disk space is below the configured minimum;
@@ -70,10 +70,10 @@ Queued requests are durable and will be retried by the scheduler. Prefer waiting
 Run:
 
 ```text
-/agents check
+/activity check
 ```
 
-Treat the watchdog result as authoritative. Quiet output alone is not a stall before `progressStaleMs` expires. When a current finding exists, automatic remediation may diagnose, restart, and eventually replace the child. You can inspect live output with `/agents attach <id>`.
+Treat the watchdog result as authoritative. Quiet output alone is not a stall before `progressStaleMs` expires. When a current finding exists, automatic remediation may diagnose, restart, and eventually replace the child. You can inspect live output with `/activity attach <id>`.
 
 ### Attach says TUI mode is required
 
@@ -95,10 +95,10 @@ Project roles and prompts are never enabled solely because the file exists.
 Cleanup deliberately keeps dirty worktrees. Inspect the agent and its diff:
 
 ```text
-/agents diff <id>
+/activity diff <id>
 ```
 
-Then commit or integrate wanted changes, remove unwanted changes manually, or use `/agents clean --discard` only after confirming that permanent deletion is safe.
+Then commit or integrate wanted changes, remove unwanted changes manually, or use `/activity clean --discard` only after confirming that permanent deletion is safe.
 
 A merge also requires the child worktree to be clean. Validation and acceptance do not automatically commit, merge, or clean work.
 
@@ -106,7 +106,7 @@ A merge also requires the child worktree to be clean. Validation and acceptance 
 
 Resume the same parent Pi session. The extension uses durable `agent.json` jobs to recreate eligible missing runner windows, replay unacknowledged commands, and redeliver pending results.
 
-If recovery fails, run `/agents-doctor` and `/agents check`. Preserve the state directory and worktree while investigating; they are the recovery sources.
+If recovery fails, run `/activity doctor` and `/activity check`. Preserve the state directory and worktree while investigating; they are the recovery sources.
 
 ### The extension prevents Pi from starting
 
@@ -143,7 +143,7 @@ Readable live output is kept in the child's tmux window rather than a separate t
 
 - operating system and versions from `node --version`, `git --version`, `tmux -V`, and `pi --version`;
 - the installed extension version from `pi list`;
-- redacted `/agents-doctor` and watchdog output;
+- redacted `/activity doctor` and watchdog output;
 - a minimal reproduction;
 - whether the parent session was new, resumed, or recovered after reboot.
 
@@ -152,7 +152,7 @@ Readable live output is kept in the child's tmux window rather than a separate t
 First settle or explicitly stop active work. Then clean terminal children:
 
 ```text
-/agents clean
+/activity clean
 ```
 
 Inspect anything retained. Use `--discard` only for work you intend to delete permanently.

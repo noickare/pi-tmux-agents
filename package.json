@@ -1,7 +1,7 @@
 {
   "name": "pi-tmux-agents",
-  "version": "0.3.9",
-  "description": "Persistent tmux-backed subagents with orchestration, watchdogs, worktrees, and a polished TUI for pi",
+  "version": "0.4.0",
+  "description": "Observable Pi activity with chronological reasoning summaries and optional persistent tmux-backed agents",
   "license": "MIT",
   "type": "module",
   "keywords": [
@@ -33,6 +33,7 @@
     "test": "vitest --run",
     "test:watch": "vitest",
     "tui:fixtures": "tsx scripts/render-fixtures.ts",
+    "tui:gallery": "tsx scripts/render-activity-gallery.ts",
     "smoke:runner": "tsx scripts/smoke-runner.ts",
     "smoke:extension": "tsx scripts/smoke-extension.ts",
     "pack:check": "npm pack --dry-run",

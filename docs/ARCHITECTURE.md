@@ -1,18 +1,19 @@
 # Architecture
 
-This document describes the implemented architecture of `pi-tmux-agents` v0.3.9. It replaces the historical implementation PRD as the source of truth for current component boundaries and runtime behavior.
+This document describes the implemented architecture of `pi-tmux-agents` v0.4.0. It replaces the historical implementation PRD as the source of truth for current component boundaries and runtime behavior.
 
 ## System overview
 
 ```text
 Parent Pi process
 └── pi-tmux-agents extension
-    ├── tmux_agent tool and /agents commands
+    ├── /activity main-agent event tracker
+    ├── optional tmux_agent delegation
     ├── AgentOrchestrator
     ├── admission queue and resource scheduler
     ├── snapshot monitor and watchdog
     ├── worktree and tmux services
-    └── dashboard and progress widget
+    └── Activity overlay and compact widget
              │ durable files + tmux
              ▼
     tmux session: pi-agents-<parent-session-id>
@@ -28,12 +29,13 @@ The parent extension and each child runner are separate processes. They coordina
 
 `src/extension/index.ts` is the package entry point. It:
 
-- registers the `tmux_agent` tool and `/agents` commands;
+- registers the optional `tmux_agent` tool and `/activity` commands;
+- translates public Pi lifecycle, message, tool, prompt, and compaction events into a bounded main-agent timeline;
 - creates session-scoped services when the parent Pi session starts;
 - restores durable child state and missing runner windows;
 - delivers completed results and current attention states to the parent;
 - runs scheduler, watchdog, and parent-review timers;
-- installs the dashboard, progress widget, and footer status in TUI mode;
+- installs the Activity overlay and below-editor widget in TUI mode;
 - disposes subscriptions and timers when the parent session shuts down.
 
 ### Orchestrator and services
@@ -58,6 +60,7 @@ The parent extension and each child runner are separate processes. They coordina
 - sends the assignment, steering, follow-ups, and control commands over RPC;
 - clears queued steering and follow-ups before abort or graceful RPC shutdown;
 - translates structured RPC events into readable terminal output and durable state;
+- retains bounded provider reasoning summaries, response blocks, and tool events in occurrence order for Activity;
 - emits heartbeats independently of model output;
 - persists a result before entering `awaiting_review`;
 - acknowledges commands so replay is idempotent;
@@ -69,7 +72,9 @@ The runner lock ensures only one process writes a child's state. Lock takeover c
 
 `src/ui/` consumes immutable view models from the registry. It does not execute Git, tmux, or RPC commands directly; typed callbacks return actions to the extension.
 
-The progress widget gives an at-a-glance summary. The dashboard adds details, activity, queue, resource, diagnostics, and settings views. Direct tmux attachment remains available for complete live inspection.
+The compact widget always gives an at-a-glance main-agent state, including when there are no children. The Activity overlay has Overview, Main, Delegated, and Events views. Main reasoning summaries use Pi's native subdued thinking treatment and are interleaved with observable tools and responses. The extension never claims hidden raw chain-of-thought. Direct tmux attachment remains available for complete child-session inspection.
+
+Pi's public component contract exposes keyboard input through `handleInput` but no mouse hit-testing or click callbacks. Activity therefore presents explicit keyboard navigation rather than rendering controls that appear clickable but cannot work.
 
 ## Durable state
 
@@ -100,7 +105,7 @@ Key ownership rules:
 - Runtime directories and control files use restrictive permissions.
 - Model-visible summaries are bounded; full local results remain available at their recorded paths.
 
-Protocol v2 state is intentionally not compatible with protocol v1. Unsupported snapshots are ignored rather than migrated.
+Protocol v3 state is intentionally not compatible with earlier protocols. Unsupported snapshots are ignored rather than migrated.
 
 ## Lifecycle
 
@@ -218,5 +223,6 @@ The project does not currently provide:
 | Runner and RPC | `src/runner/persistent-runner.ts`, `pi-rpc-process.ts`, `pi-invocation.ts` |
 | Scheduling and recovery | `src/services/scheduler.ts`, `watchdog.ts`, `runner-launcher.ts` |
 | Git and tmux | `src/services/worktrees.ts`, `tmux.ts` |
-| TUI | `src/ui/dashboard.ts`, `progress-widget.ts`, `view-model.ts` |
+| TUI | `src/ui/activity-dashboard.ts`, `activity-widget.ts`, `view-model.ts` |
+| Main activity capture | `src/core/main-activity.ts` |
 | Validation | `test/`, `scripts/`, `.github/workflows/ci.yml` |

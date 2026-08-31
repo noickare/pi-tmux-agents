@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { formatAgents, formatParentReview, HEALTHY_WATCHDOG_GUIDANCE, needsPeriodicReview, parseNewAgentTask, resolveChildDispatch, resolveChildModel } from "../src/extension/index.js";
 import { snapshot } from "./fixtures.js";
 
-describe("/agents command parsing", () => {
+describe("/activity command parsing", () => {
   it("preserves the first word of an inline new-agent task", () => {
     expect(parseNewAgentTask("Create", ["agent-output.txt", "now"])).toBe("Create agent-output.txt now");
     expect(parseNewAgentTask(undefined, [])).toBe("");

@@ -12,7 +12,7 @@ Configuration is loaded in this order:
 
 Later values override earlier values. Project configuration is read from the current Pi working directory; unlike project agent discovery, it is not searched from parent directories.
 
-Restart Pi or run `/reload` after editing configuration. Run `/agents-doctor` to verify the surrounding environment.
+Restart Pi or run `/reload` after editing configuration. Run `/activity doctor` to verify the surrounding environment.
 
 ## Example
 

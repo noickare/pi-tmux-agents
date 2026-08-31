@@ -10,6 +10,7 @@ import { Text, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { discoverAgents } from "../core/agents.js";
 import { DEFAULT_CONFIG, loadConfig, type TmuxAgentsConfig } from "../core/config.js";
+import { MainActivityTracker } from "../core/main-activity.js";
 import { getAgentStateRoot } from "../core/paths.js";
 import type { AgentCommandType, AgentPriority, AgentSnapshot, AgentStatus, AgentThinkingLevel, AgentWeight } from "../core/protocol.js";
 import type { ResourceSnapshot } from "../services/scheduler.js";
@@ -26,8 +27,8 @@ import { SnapshotMonitor } from "../services/snapshot-monitor.js";
 import { TmuxService } from "../services/tmux.js";
 import { AgentWatchdog, type WatchdogFinding } from "../services/watchdog.js";
 import { WorktreeService } from "../services/worktrees.js";
-import { AgentDashboard } from "../ui/dashboard.js";
-import { ProgressWidget } from "../ui/progress-widget.js";
+import { ActivityDashboard } from "../ui/activity-dashboard.js";
+import { ActivityWidget } from "../ui/activity-widget.js";
 import { createDashboardViewModel } from "../ui/view-model.js";
 
 const TOOL_ACTIONS = [
@@ -79,6 +80,8 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
   let parentContext: ExtensionContext | undefined;
   let parentWakeFlushScheduled = false;
   let parentWakeSequence = 0;
+  let activityOverlayOpen = false;
+  const mainActivity = new MainActivityTracker();
 
   const requireOrchestrator = () => {
     if (!orchestrator) throw new Error("Agent orchestration is not initialized for this session");
@@ -201,8 +204,8 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
     return new Text(theme.fg("warning", theme.bold("Agent supervision\n")) + theme.fg("muted", content), 0, 0);
   });
 
-  pi.registerCommand("agents", {
-    description: "Open dashboard, or use: /agents new|check|attach|steer|follow-up|abort|replace|diff|validate|clean",
+  pi.registerCommand("activity", {
+    description: "Open Activity, or use: /activity new|check|attach|steer|follow-up|abort|replace|diff|validate|clean",
     handler: async (args, ctx) => {
       const [action, agentId, ...rest] = args.trim().split(/\s+/).filter(Boolean);
       if (action === "doctor") return runDoctor(ctx);
@@ -225,7 +228,7 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
         return;
       }
       if (action === "validate" && agentId) {
-        if (!rest.length) { ctx.ui.notify("Usage: /agents validate <agent> <executable> [args...]", "error"); return; }
+        if (!rest.length) { ctx.ui.notify("Usage: /activity validate <agent> <executable> [args...]", "error"); return; }
         const result = await requireOrchestrator().validate(agentId, rest);
         ctx.ui.notify(`Validation exited ${result.code}`, result.code === 0 ? "info" : "error");
         await ctx.ui.editor(`Validation ${agentId}`, `${result.stdout}${result.stderr ? `\nSTDERR:\n${result.stderr}` : ""}`);
@@ -254,21 +257,17 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
         ctx.ui.notify(`Spawned ${launched.agentId}`, "info");
         return;
       }
-      await showDashboard(ctx);
+      await showActivity(ctx);
     },
   });
 
-  pi.registerCommand("agents-doctor", {
-    description: "Check prerequisites and tmux configuration",
-    handler: async (_args, ctx) => runDoctor(ctx),
+  pi.registerShortcut("ctrl+alt+a", {
+    description: "Open Activity",
+    handler: async (ctx) => showActivity(ctx),
   });
 
-  pi.registerCommand("agents-setup", {
-    description: "Show setup guidance without running sudo or editing configuration",
-    handler: async (_args, ctx) => runSetup(ctx),
-  });
-
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
+    mainActivity.reset(`session ${event.reason}`);
     parentContext = ctx;
     const parentSessionId = ctx.sessionManager.getSessionId();
     const agentDir = getAgentDir();
@@ -326,7 +325,6 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
     nextParentReviewAt = new Date(Date.now() + sessionConfig.parentReviewIntervalMs);
 
     registrySubscription = registry.subscribe(() => {
-      updateStatus(ctx);
       for (const agent of registry.list()) {
         queueReviewResult(agent);
         if (["failed", "blocked", "orphaned"].includes(agent.status)) {
@@ -365,19 +363,49 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
       if (count) await monitor?.scan();
     })().catch((error: unknown) => ctx.ui.notify(`Agent scheduler: ${(error as Error).message}`, "error")), sessionConfig.schedulerIntervalMs);
     if (ctx.mode === "tui") installWidget(ctx);
-    updateStatus(ctx);
   });
 
+  pi.on("agent_start", () => mainActivity.agentStarted());
+
+  pi.on("agent_end", () => mainActivity.agentEnded());
+
   pi.on("agent_settled", async (_event, ctx) => {
+    mainActivity.agentSettled();
     scheduleParentWakeFlush(ctx);
   });
 
-  pi.on("ui_prompt_start", () => {
-    parentWakes.setUiPromptActive(true);
+  pi.on("turn_start", (event) => mainActivity.turnStarted(event.turnIndex, event.timestamp));
+
+  pi.on("turn_end", (event) => mainActivity.turnEnded(event.turnIndex));
+
+  pi.on("message_update", (event) => mainActivity.messageUpdated(event.assistantMessageEvent));
+
+  pi.on("message_end", (event) => {
+    if (event.message.role !== "assistant") return;
+    const message = event.message as typeof event.message & { stopReason?: string; errorMessage?: string };
+    mainActivity.messageEnded(message.stopReason, message.errorMessage);
   });
 
-  pi.on("ui_prompt_end", () => {
+  pi.on("tool_execution_start", (event) => mainActivity.toolStarted(event.toolCallId, event.toolName, event.args));
+
+  pi.on("tool_execution_update", (event) => mainActivity.toolUpdated(event.toolCallId));
+
+  pi.on("tool_execution_end", (event) => mainActivity.toolEnded(event.toolCallId, event.toolName, event.isError));
+
+  pi.on("session_before_compact", (event) => mainActivity.compactionStarted(event.reason, event.willRetry));
+
+  pi.on("session_compact", (event) => mainActivity.compactionFinished(event.reason, event.willRetry));
+
+  pi.on("session_compact_failed", (event) => mainActivity.compactionFailed(event.reason, event.aborted, event.errorMessage));
+
+  pi.on("ui_prompt_start", (event) => {
+    parentWakes.setUiPromptActive(true);
+    if (!(activityOverlayOpen && event.kind === "custom")) mainActivity.promptStarted(event.kind, event.title);
+  });
+
+  pi.on("ui_prompt_end", (event) => {
     parentWakes.setUiPromptActive(false);
+    if (!(activityOverlayOpen && event.kind === "custom")) mainActivity.promptEnded(event.kind, event.title);
     scheduleParentWakeFlush(parentContext);
   });
 
@@ -406,59 +434,81 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
     watchdogTimer = undefined;
     ctx.ui.setWidget("tmux-agents", undefined);
     ctx.ui.setStatus("tmux-agents", undefined);
+    ctx.ui.setWidget("pi-activity", undefined);
+    ctx.ui.setStatus("pi-activity", undefined);
   });
 
-  async function showDashboard(ctx: ExtensionCommandContext): Promise<void> {
-    if (ctx.mode !== "tui") { ctx.ui.notify("The agents dashboard requires TUI mode", "error"); return; }
+  async function showActivity(ctx: ExtensionCommandContext | ExtensionContext): Promise<void> {
+    if (ctx.mode !== "tui") { ctx.ui.notify("Activity requires TUI mode", "error"); return; }
     let liveTerminalWidth = process.stdout.columns || 80;
-    await ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
-      liveTerminalWidth = tui.terminal.columns;
-      const build = () => createDashboardViewModel(registry.list(), new Date(), lastWatchdogAt, nextParentReviewAt, {
-        findings: lastWatchdogFindings,
-        ...(lastResources ? { resources: lastResources } : {}),
-        config: sessionConfig,
-      });
-      const safely = (operation: () => Promise<unknown>) => {
-        void operation().catch((error: unknown) => ctx.ui.notify(`Agent action failed: ${(error as Error).message}`, "error"));
-      };
-      const dashboard = new AgentDashboard(build(), theme, {
-        close: () => done(),
-        checkNow: () => safely(async () => { await runWatchdog(); dashboard.setViewModel(build()); tui.requestRender(); }),
-        attach: (id) => { done(); safely(() => attachAgent(ctx, requireAgent(id))); },
-        steer: (id) => safely(() => steerFromDashboard(ctx, id)),
-        followUp: (id) => safely(() => followUpFromDashboard(ctx, id)),
-        togglePause: (id, paused) => safely(() => requireOrchestrator().command(id, paused ? "resume" : "pause")),
-        recover: (id) => safely(() => recoverFromDashboard(ctx, id)),
-        abort: (id) => safely(() => abortFromDashboard(ctx, id)),
-        closeAgent: (id) => safely(() => closeFromDashboard(ctx, id)),
-      });
-      const refresh = () => { liveTerminalWidth = tui.terminal.columns; dashboard.setViewModel(build()); tui.requestRender(); };
-      const unsubscribe = registry.subscribe(refresh);
-      const timer = setInterval(refresh, 1_000);
-      return { render: (width) => dashboard.render(width), handleInput: (data) => { dashboard.handleInput(data); tui.requestRender(); }, invalidate: () => dashboard.invalidate(), dispose: () => { clearInterval(timer); unsubscribe(); } };
-    }, { overlay: true, overlayOptions: () => ({
-      width: liveTerminalWidth < 60 ? "100%" : liveTerminalWidth >= 110 ? "68%" : "94%",
-      maxHeight: liveTerminalWidth < 60 ? "100%" : "88%",
-      anchor: liveTerminalWidth >= 110 ? "right-center" : "center",
-      margin: liveTerminalWidth < 60 ? 0 : 1,
-    }) });
+    activityOverlayOpen = true;
+    try {
+      await ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
+        liveTerminalWidth = tui.terminal.columns;
+        const build = () => createDashboardViewModel(registry.list(), new Date(), lastWatchdogAt, nextParentReviewAt, {
+          findings: lastWatchdogFindings,
+          ...(lastResources ? { resources: lastResources } : {}),
+          config: sessionConfig,
+          main: mainActivity.snapshot(),
+        });
+        const safely = (operation: () => Promise<unknown>) => {
+          void operation().catch((error: unknown) => ctx.ui.notify(`Activity action failed: ${(error as Error).message}`, "error"));
+        };
+        const activity = new ActivityDashboard(build(), theme, {
+          close: () => done(),
+          checkNow: () => safely(async () => { await runWatchdog(); activity.setViewModel(build()); tui.requestRender(); }),
+          attach: (id) => { done(); safely(() => attachAgent(ctx, requireAgent(id))); },
+          openResult: (id) => safely(() => openResultFromActivity(ctx, id)),
+          steer: (id) => safely(() => steerFromDashboard(ctx, id)),
+          followUp: (id) => safely(() => followUpFromDashboard(ctx, id)),
+          togglePause: (id, paused) => safely(() => requireOrchestrator().command(id, paused ? "resume" : "pause")),
+          recover: (id) => safely(() => recoverFromDashboard(ctx, id)),
+          abort: (id) => safely(() => abortFromDashboard(ctx, id)),
+          closeAgent: (id) => safely(() => closeFromDashboard(ctx, id)),
+          accept: (id) => safely(() => requireOrchestrator().command(id, "accept")),
+          revise: (id) => safely(() => reviseFromActivity(ctx, id)),
+          takeOver: (id) => safely(() => requireOrchestrator().command(id, "take_over")),
+          escalate: (id) => safely(() => escalateFromActivity(ctx, id)),
+          dismiss: (id) => safely(() => requireOrchestrator().command(id, "dismiss")),
+        }, () => new Date(), () => {
+          const columns = tui.terminal.columns;
+          const rows = tui.terminal.rows;
+          const margin = columns < 72 ? 0 : 1;
+          const maxHeight = columns < 72 ? rows : Math.floor(rows * 0.92);
+          return Math.max(1, Math.min(maxHeight, rows - margin * 2));
+        });
+        const refresh = () => { liveTerminalWidth = tui.terminal.columns; activity.setViewModel(build()); tui.requestRender(); };
+        const unsubscribe = registry.subscribe(refresh);
+        const timer = setInterval(refresh, 500);
+        return { render: (width) => activity.render(width), handleInput: (data) => { activity.handleInput(data); tui.requestRender(); }, invalidate: () => activity.invalidate(), dispose: () => { clearInterval(timer); unsubscribe(); } };
+      }, { overlay: true, overlayOptions: () => ({
+        width: liveTerminalWidth < 72 ? "100%" : liveTerminalWidth >= 140 ? "44%" : liveTerminalWidth >= 100 ? "62%" : "94%",
+        ...(liveTerminalWidth < 72 ? {} : { minWidth: 68 }),
+        maxHeight: liveTerminalWidth < 72 ? "100%" : "92%",
+        anchor: liveTerminalWidth >= 100 ? "right-center" : "center",
+        margin: liveTerminalWidth < 72 ? 0 : 1,
+      }) });
+    } finally {
+      activityOverlayOpen = false;
+    }
   }
 
   function installWidget(ctx: ExtensionContext): void {
-    ctx.ui.setWidget("tmux-agents", (tui: TUI, theme) => {
+    ctx.ui.setWidget("pi-activity", (tui: TUI, theme) => {
       const build = () => createDashboardViewModel(registry.list(), new Date(), lastWatchdogAt, nextParentReviewAt, {
         findings: lastWatchdogFindings,
         ...(lastResources ? { resources: lastResources } : {}),
         config: sessionConfig,
+        main: mainActivity.snapshot(),
       });
-      const widget = new ProgressWidget(build(), theme);
+      const widget = new ActivityWidget(build(), theme);
       const refresh = () => { widget.setViewModel(build()); tui.requestRender(); };
       const unsubscribe = registry.subscribe(refresh);
-      const timer = setInterval(refresh, 1_000);
+      const timer = setInterval(refresh, 500);
       const dispose = () => { clearInterval(timer); unsubscribe(); };
       clearWidget = dispose;
       return Object.assign(widget, { dispose });
-    });
+    }, { placement: "belowEditor" });
   }
 
   async function runWatchdog(): Promise<WatchdogFinding[]> {
@@ -565,7 +615,7 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
     const report = formatDoctorReport(checks);
     if (checks.every((check) => check.ok)) { ctx.ui.notify("Persistent agent prerequisites are ready.", "info"); return; }
     if (ctx.hasUI && await ctx.ui.confirm("Show setup guidance?", "No commands will be executed and no files will be changed.")) {
-      await ctx.ui.editor("Persistent agent setup", `${report}\n\nAfter applying desired changes, run /agents-doctor again.`);
+      await ctx.ui.editor("Persistent agent setup", `${report}\n\nAfter applying desired changes, run /activity doctor again.`);
     }
   }
 
@@ -609,7 +659,7 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
         return;
       }
       pi.sendMessage(
-        { customType: "tmux-agents-supervision", content: messages.join("\n\n"), display: true },
+        { customType: "tmux-agents-supervision", content: messages.join("\n\n"), display: false },
         { deliverAs: "followUp", triggerTurn: true },
       );
       setTimeout(() => {
@@ -631,13 +681,6 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
     return findings.map((finding) => `${finding.agentId}:${finding.kind}:${finding.severity}`).sort().join("|");
   }
 
-  function updateStatus(ctx: ExtensionContext): void {
-    const agents = registry.list();
-    const active = agents.filter((agent) => ["running", "waiting", "retrying", "compacting"].includes(agent.status)).length;
-    const attention = agents.filter((agent) => ["awaiting_review", "failed", "blocked", "orphaned"].includes(agent.status)).length;
-    ctx.ui.setStatus("tmux-agents", ctx.ui.theme.fg(attention ? "warning" : active ? "accent" : "dim", `agents: ${active} active${attention ? ` · ${attention}!` : ""}`));
-  }
-
   function requireAgent(id: string): AgentSnapshot {
     const exact = registry.get(id);
     const matches = exact ? [exact] : registry.list().filter((agent) => agent.agentId.startsWith(id) || agent.name === id);
@@ -645,31 +688,46 @@ export default function tmuxAgentsExtension(pi: ExtensionAPI) {
     return matches[0]!;
   }
 
-  async function steerFromDashboard(ctx: ExtensionCommandContext, id: string): Promise<void> {
+  async function openResultFromActivity(ctx: ExtensionContext, id: string): Promise<void> {
+    const result = await requireOrchestrator().result(id);
+    await ctx.ui.editor(`Result · ${id}`, formatResult(result));
+  }
+
+  async function reviseFromActivity(ctx: ExtensionContext, id: string): Promise<void> {
+    const message = await ctx.ui.editor(`Request revision · ${id}`, "");
+    if (message) await requireOrchestrator().command(id, "revise", message);
+  }
+
+  async function escalateFromActivity(ctx: ExtensionContext, id: string): Promise<void> {
+    const reason = await ctx.ui.input(`Escalate ${id}`, "Decision needed from the user");
+    if (reason) await requireOrchestrator().command(id, "escalate", undefined, { reason });
+  }
+
+  async function steerFromDashboard(ctx: ExtensionContext, id: string): Promise<void> {
     const message = await ctx.ui.editor(`Steer ${id} now`, "");
     if (message) await requireOrchestrator().command(id, "steer", message);
   }
 
-  async function followUpFromDashboard(ctx: ExtensionCommandContext, id: string): Promise<void> {
+  async function followUpFromDashboard(ctx: ExtensionContext, id: string): Promise<void> {
     const message = await ctx.ui.editor(`Follow up after ${id}'s current work`, "");
     if (message) await requireOrchestrator().command(id, "follow_up", message);
   }
 
-  async function recoverFromDashboard(ctx: ExtensionCommandContext, id: string): Promise<void> {
+  async function recoverFromDashboard(ctx: ExtensionContext, id: string): Promise<void> {
     const action = await ctx.ui.select(`Recover ${id}`, ["Restart RPC session", "Replace agent with worktree handoff"]);
     if (action === "Restart RPC session") await requireOrchestrator().command(id, "restart");
     if (action === "Replace agent with worktree handoff") await requireOrchestrator().replace(id, "Replacement requested from dashboard");
   }
 
-  async function closeFromDashboard(ctx: ExtensionCommandContext, id: string): Promise<void> {
+  async function closeFromDashboard(ctx: ExtensionContext, id: string): Promise<void> {
     if (await ctx.ui.confirm(`Close and clean ${id}?`, "Dirty worktrees are retained.")) await requireOrchestrator().closeAndClean(id, ctx.cwd);
   }
 
-  async function abortFromDashboard(ctx: ExtensionCommandContext, id: string): Promise<void> {
+  async function abortFromDashboard(ctx: ExtensionContext, id: string): Promise<void> {
     if (await ctx.ui.confirm(`Abort ${id}?`, "Queued steering and follow-ups will be discarded. The persistent agent will remain available after its current operation is aborted.")) await requireOrchestrator().command(id, "abort");
   }
 
-  async function attachAgent(ctx: ExtensionCommandContext, snapshot: AgentSnapshot): Promise<void> {
+  async function attachAgent(ctx: ExtensionContext, snapshot: AgentSnapshot): Promise<void> {
     if (ctx.mode !== "tui") throw new Error("Attaching to an agent requires interactive TUI mode");
     if (!snapshot.tmuxTarget) throw new Error(`Agent ${snapshot.name} has no tmux target`);
     const [session] = snapshot.tmuxTarget.split(":");
